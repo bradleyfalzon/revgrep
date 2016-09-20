@@ -4,8 +4,10 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -17,8 +19,48 @@ type state struct {
 	changes []uint64 // line numbers being changes
 }
 
-func Changes() {
+func Changes(reader io.Reader) {
+
 	fmt.Println("Checking for changes...")
+
+	// file:lineNumber
+	lineRE := regexp.MustCompile("^(.*):([0-9]+).*")
+
+	// TODO consider lazy loading this, if there's nothing in stdin, no point
+	// checking for recent changes
+	linesChanged := linesChanged()
+	fmt.Printf("changed lines: %+v\n", linesChanged)
+
+	scanner := bufio.NewScanner(reader)
+	for scanner.Scan() {
+		line := lineRE.FindSubmatch(scanner.Bytes())
+		if line == nil {
+			continue
+		}
+
+		// Parse line number
+		lno, err := strconv.ParseUint(string(line[2]), 10, 64)
+		if err != nil {
+			continue
+		}
+
+		if fchanges, ok := linesChanged[string(line[1])]; ok {
+			// found file, see if lines matched
+			for _, fno := range fchanges {
+				if fno == lno {
+					fmt.Println("reader:", string(line[0]))
+				}
+			}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		fmt.Fprintln(os.Stderr, "reading standard input:", err)
+	}
+}
+
+// linesChanges returns a map of file names to line numbers being changed
+func linesChanged() map[string][]uint64 {
+	// TODO returned file name should be full filesystem path
 
 	// --no-prefix to remove b/ given: +++ b/main.go
 	diff, err := exec.Command("git", "diff", "--no-prefix").CombinedOutput()
@@ -32,7 +74,7 @@ func Changes() {
 		changes = make(map[string][]uint64)
 	)
 	for scanner.Scan() {
-		line := scanner.Text()
+		line := scanner.Text() // TODO scanner.Bytes()
 		s.lineNo++
 		switch {
 		case len(line) >= 4 && line[:3] == "+++":
@@ -41,8 +83,6 @@ func Changes() {
 				changes[s.file] = s.changes
 			}
 			s = state{file: line[4:]}
-			fmt.Println("line:", line)
-			fmt.Println("file:", s.file)
 		case len(line) >= 3 && line[:3] == "@@ ":
 			//      @@ -1 +2,4 @@
 			// chdr ^^^^^^^^^^^^^
@@ -56,11 +96,8 @@ func Changes() {
 			if err != nil {
 				panic(err)
 			}
-			fmt.Println("chdr:", line)
-			fmt.Println("cstart:", s.cstart)
 		case len(line) > 0 && line[:1] == "+":
 			s.changes = append(s.changes, s.lineNo)
-			fmt.Println(scanner.Text())
 		}
 
 	}
@@ -70,6 +107,5 @@ func Changes() {
 	// record the last state
 	changes[s.file] = s.changes
 
-	fmt.Printf("changed lines: %+v\n", changes)
-
+	return changes
 }

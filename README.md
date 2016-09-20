@@ -11,6 +11,9 @@ Using `regrep`, you can show only warnings for lines of code that have been chan
 [user@host dir (master)]$ go vet
 main.go:5: missing argument for Sprintf("%s"): format reads arg 1, have only 0 args
 main.go:6: missing argument for Sprintf("%s"): format reads arg 1, have only 0 args
-[user@host dir (master)]$ go vet | refgrep
+[user@host dir (master)]$ go vet |& refgrep
 main.go:5: missing argument for Sprintf("%s"): format reads arg 1, have only 0 args
 ```
+
+`|&` is shown above as many static analysis programs write to `stderr`, not `stdout`, `|&` combines both `stderr` and
+`stdout`. It could also be achieved with `go vet 2>&1 | refgrep`.
