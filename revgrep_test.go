@@ -1,4 +1,4 @@
-package refgrep
+package revgrep
 
 import "testing"
 

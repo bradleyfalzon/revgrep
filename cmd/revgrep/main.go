@@ -4,14 +4,14 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/bradleyfalzon/refgrep"
+	"github.com/bradleyfalzon/revgrep"
 )
 
 func main() {
 	fmt.Println("Starting...")
 
 	// Get lines changes
-	refgrep.Changes(os.Stdin)
+	revgrep.Changes(os.Stdin)
 
 	// Open stdin and scan
 
