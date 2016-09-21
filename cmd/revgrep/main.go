@@ -11,7 +11,7 @@ func main() {
 	fmt.Println("Starting...")
 
 	// Get lines changes
-	revgrep.Changes(os.Stdin)
+	revgrep.Changes(os.Stdin, os.Stderr)
 
 	// Open stdin and scan
 

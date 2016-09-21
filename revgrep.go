@@ -19,7 +19,7 @@ type state struct {
 	changes []uint64 // line numbers being changes
 }
 
-func Changes(reader io.Reader) {
+func Changes(reader io.Reader, writer io.Writer) {
 
 	fmt.Println("Checking for changes...")
 
@@ -48,7 +48,7 @@ func Changes(reader io.Reader) {
 			// found file, see if lines matched
 			for _, fno := range fchanges {
 				if fno == lno {
-					fmt.Println("reader:", string(line[0]))
+					fmt.Fprintf(writer, "%s\n", line[0])
 				}
 			}
 		}
