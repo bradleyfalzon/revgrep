@@ -1,5 +1,7 @@
 # Overview
 
+[![Build Status](https://travis-ci.org/bradleyfalzon/revgrep.svg?branch=master)](https://travis-ci.org/bradleyfalzon/revgrep)
+
 `revgrep` is a CLI tool used to filter static analysis tools to only lines changed based on a commit reference.
 
 # Usage
