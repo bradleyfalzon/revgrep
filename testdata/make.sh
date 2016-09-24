@@ -27,3 +27,9 @@ import "fmt"
 var _ = fmt.Sprintf("%s") // main.go:3: missing argument for Sprintf("%s")...
 func main() {}
 EOF
+
+# Untracked changes with go vet warning
+cat > untracked.go <<EOF
+package main
+var _ = fmt.Sprintf("untracked %v") // untracked.go:2: missing argument for Sprintf("untracked %v")...
+EOF

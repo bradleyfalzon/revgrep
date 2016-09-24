@@ -30,8 +30,11 @@ func Changes(patch io.Reader, reader io.Reader, writer io.Writer) {
 		var err error
 		patch, err = GitPatch()
 		if err != nil {
+			// TODO don't panic, handle it
 			panic(err)
 		}
+		// TODO write an error to stderr and show all changes then document
+		// the behaviour
 		if patch == nil {
 			panic("no version control repository found")
 		}
@@ -136,9 +139,22 @@ func GitPatch() (io.Reader, error) {
 	if err := cmd.Run(); err != nil {
 		return nil, fmt.Errorf("error executing git diff: %s", err)
 	}
+	foundUnstaged := patch.Len() > 0
+
+	// make a patch from untracked files
+
+	ls, err := exec.Command("git", "ls-files", "-o").CombinedOutput()
+	for _, file := range bytes.Split(ls, []byte{'\n'}) {
+		if len(file) == 0 {
+			continue
+		}
+		if err := makePatch(string(file), &patch); err != nil {
+			return nil, err
+		}
+	}
 
 	// If git diff show unstaged changes, use that patch
-	if patch.Len() > 0 {
+	if foundUnstaged {
 		return &patch, nil
 	}
 
@@ -151,4 +167,16 @@ func GitPatch() (io.Reader, error) {
 	}
 
 	return &patch, nil
+}
+
+// makePatch makes a patch from a file on the file system, writes to patch
+// TODO this shouldn't require an external dependency and could be refactored
+// into a different method
+func makePatch(file string, patch io.Writer) error {
+	cmd := exec.Command("diff", "-u", os.DevNull, file)
+	cmd.Stdout = patch
+	if err := cmd.Run(); err != nil && err.Error() != "exit status 1" {
+		return fmt.Errorf("could not diff %s: %v", file, err)
+	}
+	return nil
 }
