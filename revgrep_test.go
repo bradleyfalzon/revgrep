@@ -8,41 +8,106 @@ import (
 	"testing"
 )
 
-func TestChanges(t *testing.T) {
-
-	cwd, err := os.Getwd()
+func setup(t *testing.T) (prevwd string) {
+	wd, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("could not get working dir: %s", err)
 	}
 
 	// Execute make
 	cmd := exec.Command("./make.sh")
-	cmd.Dir = filepath.Join(cwd, "testdata")
+	cmd.Dir = filepath.Join(wd, "testdata")
 	err = cmd.Run()
 	if err != nil {
 		t.Fatalf("could not run make.sh: %v", err)
 	}
 
 	// chdir so the vcs exec commands read the correct testdata
-	err = os.Chdir(filepath.Join(cwd, "testdata", "git"))
+	err = os.Chdir(filepath.Join(wd, "testdata", "git"))
+	if err != nil {
+		t.Fatalf("could not chdir: %v", err)
+	}
+	return wd
+}
+
+func teardown(t *testing.T, wd string) {
+	err := os.Chdir(wd)
+	if err != nil {
+		t.Fatalf("could not chdir: %v", err)
+	}
+}
+
+// TestChanges is a complete test using testdata
+func TestChanges(t *testing.T) {
+	prevwd := setup(t)
+	defer teardown(t, prevwd)
+
+	writer := bytes.NewBuffer([]byte{})
+	reader := bytes.NewBufferString(`main.go:3: missing argument
+main.go:9999: missing argument
+`)
+	exp := "main.go:3: missing argument\n"
+
+	// the vcs (thanks to make.sh) will alert us line 3 has changed
+	// reader shows multiple lines are affected
+	// writer should just have the lines changes according to vcs
+	// exp is what's expected
+	Changes(nil, reader, writer)
+
+	if writer.String() != exp {
+		t.Errorf("exp:\n%q\ngot:\n%q\n", exp, writer.String())
+	}
+
+}
+
+func TestGitPatch(t *testing.T) {
+	prevwd := setup(t)
+	defer teardown(t, prevwd)
+
+	exp := []byte(`+var _ = fmt.Sprintf("%s") // main.go:3: missing argument for Sprintf("%s")...`)
+
+	// Test for unstaged changes
+
+	patch, err := GitPatch()
+	if err != nil {
+		t.Fatalf("unexpected error from git: %v", err)
+	}
+	if !bytes.Contains(patch.(*bytes.Buffer).Bytes(), exp) {
+		t.Fatalf("GitPatch did not detect unstaged changes")
+	}
+
+	// Commit
+
+	err = exec.Command("git", "commit", "-am", "TestGitPatch").Run()
+	if err != nil {
+		t.Fatalf("could not commit changes: %v", err)
+	}
+
+	// Test for last commit
+
+	patch, err = GitPatch()
+	if err != nil {
+		t.Fatalf("unexpected error from git: %v", err)
+	}
+	if !bytes.Contains(patch.(*bytes.Buffer).Bytes(), exp) {
+		t.Fatalf("GitPatch did not detect unstaged changes")
+	}
+
+	// Change to non-git dir
+
+	err = os.Chdir("/")
 	if err != nil {
 		t.Fatalf("could not chdir: %v", err)
 	}
 
-	writer := bytes.NewBuffer([]byte{})
-	reader := bytes.NewBufferString(`main.go:5: missing argument
-main.go:6: missing argument
-`)
-	exp := "main.go:5: missing argument\n"
+	// Test for handling non git dir
 
-	// the vcs (thanks to make.sh) will alert us line 5 has changed
-	// reader shows multiple lines are affected
-	// writer should just have the lines changes according to vcs
-	// exp is what's expected
-	Changes(reader, writer)
-
-	if writer.String() != exp {
-		t.Errorf("exp:\n%q\ngot:\n%q\n", exp, writer.String())
+	patch, err = GitPatch()
+	if err != nil {
+		t.Fatalf("unexpected error from git: %v", err)
+	}
+	if patch != nil {
+		t.Fatalf("expected nil, got %v", patch)
 	}
 
 }

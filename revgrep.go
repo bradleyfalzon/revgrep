@@ -14,22 +14,32 @@ import (
 
 type state struct {
 	file    string
-	cstart  uint64   // chunkstart == 2 given: @@ -1 +2,4 @@
 	lineNo  uint64   // current line number within chunk
 	changes []uint64 // line numbers being changes
 }
 
-func Changes(reader io.Reader, writer io.Writer) {
-
-	fmt.Println("Checking for changes...")
+// Changes scans reader and writes any lines to writer that have been added
+// in patch, if patch is nil, Changes will detect version control repository
+// and generate a suitable patch.
+func Changes(patch io.Reader, reader io.Reader, writer io.Writer) {
 
 	// file:lineNumber
 	lineRE := regexp.MustCompile("^(.*):([0-9]+).*")
 
+	if patch == nil {
+		var err error
+		patch, err = GitPatch()
+		if err != nil {
+			panic(err)
+		}
+		if patch == nil {
+			panic("no version control repository found")
+		}
+	}
+
 	// TODO consider lazy loading this, if there's nothing in stdin, no point
 	// checking for recent changes
-	linesChanged := linesChanged()
-	fmt.Printf("changed lines: %+v\n", linesChanged)
+	linesChanged := linesChanged(patch)
 
 	scanner := bufio.NewScanner(reader)
 	for scanner.Scan() {
@@ -59,16 +69,10 @@ func Changes(reader io.Reader, writer io.Writer) {
 }
 
 // linesChanges returns a map of file names to line numbers being changed
-func linesChanged() map[string][]uint64 {
+func linesChanged(patch io.Reader) map[string][]uint64 {
 	// TODO returned file name should be full filesystem path
-
-	// --no-prefix to remove b/ given: +++ b/main.go
-	diff, err := exec.Command("git", "diff", "--no-prefix").CombinedOutput()
-	if err != nil {
-		panic(err)
-	}
 	// TODO stream this
-	scanner := bufio.NewScanner(bytes.NewBuffer(diff))
+	scanner := bufio.NewScanner(patch)
 	var (
 		s       state
 		changes = make(map[string][]uint64)
@@ -90,12 +94,14 @@ func linesChanged() map[string][]uint64 {
 			// cstart      ^
 			chdr := strings.Split(line, " ")
 			ahdr := strings.Split(chdr[2], ",")
-			var err error
 			// [1:] to remove leading plus
-			s.cstart, err = strconv.ParseUint(ahdr[0][1:], 10, 64)
+			cstart, err := strconv.ParseUint(ahdr[0][1:], 10, 64)
 			if err != nil {
 				panic(err)
 			}
+			s.lineNo = cstart - 1 // -1 as cstart is the next line number
+		case len(line) > 0 && line[:1] == "-":
+			s.lineNo--
 		case len(line) > 0 && line[:1] == "+":
 			s.changes = append(s.changes, s.lineNo)
 		}
@@ -108,4 +114,41 @@ func linesChanged() map[string][]uint64 {
 	changes[s.file] = s.changes
 
 	return changes
+}
+
+// GitPatch returns a patch from a git repository, if no git repository was
+// was found and no errors occurred, nil is returned, else an error is returned
+func GitPatch() (io.Reader, error) {
+	var patch bytes.Buffer
+
+	// check if git repo exists
+
+	err := exec.Command("git", "status").Run()
+	if err != nil {
+		return nil, nil
+	}
+
+	// check for unstaged changes
+	// use --no-prefix to remove b/ given: +++ b/main.go
+
+	cmd := exec.Command("git", "diff", "--no-prefix")
+	cmd.Stdout = &patch
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("error executing git diff: %s", err)
+	}
+
+	// If git diff show unstaged changes, use that patch
+	if patch.Len() > 0 {
+		return &patch, nil
+	}
+
+	// check for changes in recent commit
+
+	cmd = exec.Command("git", "diff", "--no-prefix", "HEAD~")
+	cmd.Stdout = &patch
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("error executing git diff: %s", err)
+	}
+
+	return &patch, nil
 }
