@@ -148,9 +148,7 @@ func GitPatch() (io.Reader, error) {
 		if len(file) == 0 {
 			continue
 		}
-		if err := makePatch(string(file), &patch); err != nil {
-			return nil, err
-		}
+		makePatch(string(file), &patch)
 	}
 
 	// If git diff show unstaged changes, use that patch
@@ -172,11 +170,9 @@ func GitPatch() (io.Reader, error) {
 // makePatch makes a patch from a file on the file system, writes to patch
 // TODO this shouldn't require an external dependency and could be refactored
 // into a different method
-func makePatch(file string, patch io.Writer) error {
+func makePatch(file string, patch io.Writer) {
 	cmd := exec.Command("diff", "-u", os.DevNull, file)
 	cmd.Stdout = patch
-	if err := cmd.Run(); err != nil && err.Error() != "exit status 1" {
-		return fmt.Errorf("could not diff %s: %v", file, err)
-	}
-	return nil
+	// ignore errors from cmd.Run(), this maybe an untracked due to binary file
+	_ = cmd.Run()
 }
