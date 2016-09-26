@@ -8,6 +8,12 @@ Note: requires a `diff` tool in PATH to generate a unified diff with the `-u` fl
 used to generate a patch for files not in version control, and could be implemented internally without requiring
 dependency.
 
+# Install
+
+```bash
+go get -u github.com/bradleyfalzon/revgrep/...
+```
+
 # Usage
 
 In the scenario below, a change was made causing a warning in `go vet` on line 5, but `go vet` will show all warnings.
