@@ -12,31 +12,27 @@ import (
 	"strings"
 )
 
-type state struct {
-	file    string
-	lineNo  uint64   // current line number within chunk
-	changes []uint64 // line numbers being changes
-}
-
 // Changes scans reader and writes any lines to writer that have been added
 // in patch, if patch is nil, Changes will detect version control repository
-// and generate a suitable patch.
-func Changes(patch io.Reader, reader io.Reader, writer io.Writer) {
+// and generate a suitable patch. Returns number of issues written to writer.
+// If no VCS could be found or other VCS errors occur, all issues are written
+// to writer.
+func Changes(patch io.Reader, reader io.Reader, writer io.Writer) int {
 
 	// file:lineNumber
-	lineRE := regexp.MustCompile("^(.*):([0-9]+).*")
+	lineRE := regexp.MustCompile("^(.*):([0-9]+)")
 
+	var writeAll bool
 	if patch == nil {
 		var err error
 		patch, err = GitPatch()
 		if err != nil {
-			// TODO don't panic, handle it
-			panic(err)
+			writeAll = true
+			fmt.Fprintf(os.Stderr, "Could not read git repo: %v\n", err)
 		}
-		// TODO write an error to stderr and show all changes then document
-		// the behaviour
 		if patch == nil {
-			panic("no version control repository found")
+			writeAll = true
+			fmt.Fprintln(os.Stderr, "No version control repository found")
 		}
 	}
 
@@ -44,10 +40,16 @@ func Changes(patch io.Reader, reader io.Reader, writer io.Writer) {
 	// checking for recent changes
 	linesChanged := linesChanged(patch)
 
+	issueCount := 0
 	scanner := bufio.NewScanner(reader)
 	for scanner.Scan() {
 		line := lineRE.FindSubmatch(scanner.Bytes())
 		if line == nil {
+			continue
+		}
+
+		if writeAll {
+			fmt.Fprintln(writer, scanner.Text())
 			continue
 		}
 
@@ -61,25 +63,37 @@ func Changes(patch io.Reader, reader io.Reader, writer io.Writer) {
 			// found file, see if lines matched
 			for _, fno := range fchanges {
 				if fno == lno {
-					fmt.Fprintf(writer, "%s\n", line[0])
+					issueCount++
+					fmt.Fprintln(writer, scanner.Text())
 				}
 			}
 		}
+
 	}
 	if err := scanner.Err(); err != nil {
 		fmt.Fprintln(os.Stderr, "reading standard input:", err)
 	}
+	return issueCount
 }
 
 // linesChanges returns a map of file names to line numbers being changed
 func linesChanged(patch io.Reader) map[string][]uint64 {
-	// TODO returned file name should be full filesystem path
-	// TODO stream this
-	scanner := bufio.NewScanner(patch)
+	type state struct {
+		file    string
+		lineNo  uint64   // current line number within chunk
+		changes []uint64 // line numbers being changed
+	}
+
 	var (
 		s       state
 		changes = make(map[string][]uint64)
 	)
+
+	if patch == nil {
+		return changes
+	}
+
+	scanner := bufio.NewScanner(patch)
 	for scanner.Scan() {
 		line := scanner.Text() // TODO scanner.Bytes()
 		s.lineNo++

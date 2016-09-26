@@ -29,3 +29,6 @@ main.go:5: missing argument for Sprintf("%s"): format reads arg 1, have only 0 a
 
 `|&` is shown above as many static analysis programs write to `stderr`, not `stdout`, `|&` combines both `stderr` and
 `stdout`. It could also be achieved with `go vet 2>&1 | revgrep`.
+
+`revgrep` CLI tool will return an exit status of 1 if any issues match, else it will return 0. Consider using
+`${PIPESTATUS[0]}` for the exit status of the `go vet` command in the above example.

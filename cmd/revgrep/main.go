@@ -8,5 +8,8 @@ import (
 
 func main() {
 	// Get lines changes
-	revgrep.Changes(nil, os.Stdin, os.Stderr)
+	issueCount := revgrep.Changes(nil, os.Stdin, os.Stderr)
+	if issueCount > 0 {
+		os.Exit(1)
+	}
 }
