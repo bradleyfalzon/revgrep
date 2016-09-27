@@ -79,6 +79,11 @@ func TestGitPatch(t *testing.T) {
 
 	// Commit
 
+	err = exec.Command("git", "add", ".").Run()
+	if err != nil {
+		t.Fatalf("could not commit changes: %v", err)
+	}
+
 	err = exec.Command("git", "commit", "-am", "TestGitPatch").Run()
 	if err != nil {
 		t.Fatalf("could not commit changes: %v", err)

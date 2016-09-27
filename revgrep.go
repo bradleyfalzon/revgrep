@@ -170,6 +170,11 @@ func GitPatch() (io.Reader, error) {
 		return nil, nil
 	}
 
+	var (
+		unstaged  bool
+		untracked bool
+	)
+
 	// check for unstaged changes
 	// use --no-prefix to remove b/ given: +++ b/main.go
 
@@ -178,7 +183,7 @@ func GitPatch() (io.Reader, error) {
 	if err := cmd.Run(); err != nil {
 		return nil, fmt.Errorf("error executing git diff: %s", err)
 	}
-	foundUnstaged := patch.Len() > 0
+	unstaged = patch.Len() > 0
 
 	// make a patch from untracked files
 
@@ -188,10 +193,11 @@ func GitPatch() (io.Reader, error) {
 			continue
 		}
 		makePatch(string(file), &patch)
+		untracked = true
 	}
 
 	// If git diff show unstaged changes, use that patch
-	if foundUnstaged {
+	if unstaged || untracked {
 		return &patch, nil
 	}
 
