@@ -52,7 +52,8 @@ main.go:9999: missing argument
 	// reader shows multiple lines are affected
 	// writer should just have the lines changes according to vcs
 	// exp is what's expected
-	Changes(nil, reader, writer)
+	checker := Checker{}
+	checker.Check(reader, writer)
 
 	if writer.String() != exp {
 		t.Errorf("exp:\n%q\ngot:\n%q\n", exp, writer.String())

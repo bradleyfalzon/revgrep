@@ -12,39 +12,51 @@ import (
 	"strings"
 )
 
-// Changes scans reader and writes any lines to writer that have been added
-// in patch, if patch is nil, Changes will detect version control repository
-// and generate a suitable patch. Returns number of issues written to writer.
-// If no VCS could be found or other VCS errors occur, all issues are written
-// to writer.
-func Changes(patch io.Reader, reader io.Reader, writer io.Writer) int {
+type Checker struct {
+	// Unified patch file to read to detect lines being changed, if nil revgrep
+	// will attempt to detect the VCS and generate an appropriate patch. Auto
+	// detection will search for uncommitted changes first, if none found, will
+	// generate a patch from last committed change.
+	Patch io.Reader
+	// Debug sets the debug writer for additional output
+	Debug io.Writer
+}
+
+// Check scans reader and writes any lines to writer that have been added in
+// Checker.Patch. Returns number of issues written to writer. If no VCS could
+// be found or other VCS errors occur, all issues are written to writer.
+func (c Checker) Check(reader io.Reader, writer io.Writer) int {
 
 	// file:lineNumber
 	lineRE := regexp.MustCompile("^(.*):([0-9]+)")
 
+	// Check if patch is supplied, if not, retrieve from VCS
 	var writeAll bool
-	if patch == nil {
+	if c.Patch == nil {
 		var err error
-		patch, err = GitPatch()
+		c.Patch, err = GitPatch()
 		if err != nil {
 			writeAll = true
-			fmt.Fprintf(os.Stderr, "Could not read git repo: %v\n", err)
+			c.debug("could not read git repo:", err)
 		}
-		if patch == nil {
+		if c.Patch == nil {
 			writeAll = true
-			fmt.Fprintln(os.Stderr, "No version control repository found")
+			c.debug("no version control repository found")
 		}
 	}
 
 	// TODO consider lazy loading this, if there's nothing in stdin, no point
 	// checking for recent changes
-	linesChanged := linesChanged(patch)
+	linesChanged := c.linesChanged()
+	c.debug(fmt.Sprintf("lines changed: %+v", linesChanged))
 
+	// Scan each line in reader and only write those lines if lines changed
 	issueCount := 0
 	scanner := bufio.NewScanner(reader)
 	for scanner.Scan() {
 		line := lineRE.FindSubmatch(scanner.Bytes())
 		if line == nil {
+			c.debug("cannot parse file+line number:", scanner.Text())
 			continue
 		}
 
@@ -56,19 +68,24 @@ func Changes(patch io.Reader, reader io.Reader, writer io.Writer) int {
 		// Parse line number
 		lno, err := strconv.ParseUint(string(line[2]), 10, 64)
 		if err != nil {
+			c.debug("cannot parse line number:", scanner.Text())
 			continue
 		}
 
+		var changed bool
 		if fchanges, ok := linesChanged[string(line[1])]; ok {
 			// found file, see if lines matched
 			for _, fno := range fchanges {
 				if fno == lno {
+					changed = true
 					issueCount++
 					fmt.Fprintln(writer, scanner.Text())
 				}
 			}
 		}
-
+		if !changed {
+			c.debug("unchanged:", scanner.Text())
+		}
 	}
 	if err := scanner.Err(); err != nil {
 		fmt.Fprintln(os.Stderr, "reading standard input:", err)
@@ -76,8 +93,15 @@ func Changes(patch io.Reader, reader io.Reader, writer io.Writer) int {
 	return issueCount
 }
 
+func (c Checker) debug(s ...interface{}) {
+	if c.Debug != nil {
+		fmt.Fprint(c.Debug, "DEBUG: ")
+		fmt.Fprintln(c.Debug, s...)
+	}
+}
+
 // linesChanges returns a map of file names to line numbers being changed
-func linesChanged(patch io.Reader) map[string][]uint64 {
+func (c Checker) linesChanged() map[string][]uint64 {
 	type state struct {
 		file    string
 		lineNo  uint64   // current line number within chunk
@@ -89,13 +113,14 @@ func linesChanged(patch io.Reader) map[string][]uint64 {
 		changes = make(map[string][]uint64)
 	)
 
-	if patch == nil {
+	if c.Patch == nil {
 		return changes
 	}
 
-	scanner := bufio.NewScanner(patch)
+	scanner := bufio.NewScanner(c.Patch)
 	for scanner.Scan() {
 		line := scanner.Text() // TODO scanner.Bytes()
+		c.debug(line)
 		s.lineNo++
 		switch {
 		case len(line) >= 4 && line[:3] == "+++":
