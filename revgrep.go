@@ -22,14 +22,15 @@ type Checker struct {
 	Debug io.Writer
 }
 
+var (
+	// file:lineNumber
+	lineRE = regexp.MustCompile("^(.*):([0-9]+)")
+)
+
 // Check scans reader and writes any lines to writer that have been added in
 // Checker.Patch. Returns number of issues written to writer. If no VCS could
 // be found or other VCS errors occur, all issues are written to writer.
 func (c Checker) Check(reader io.Reader, writer io.Writer) int {
-
-	// file:lineNumber
-	lineRE := regexp.MustCompile("^(.*):([0-9]+)")
-
 	// Check if patch is supplied, if not, retrieve from VCS
 	var writeAll bool
 	if c.Patch == nil {
@@ -51,7 +52,7 @@ func (c Checker) Check(reader io.Reader, writer io.Writer) int {
 	c.debug(fmt.Sprintf("lines changed: %+v", linesChanged))
 
 	// Scan each line in reader and only write those lines if lines changed
-	issueCount := 0
+	var issueCount int
 	scanner := bufio.NewScanner(reader)
 	for scanner.Scan() {
 		line := lineRE.FindSubmatch(scanner.Bytes())
@@ -123,13 +124,13 @@ func (c Checker) linesChanged() map[string][]uint64 {
 		c.debug(line)
 		s.lineNo++
 		switch {
-		case len(line) >= 4 && line[:3] == "+++":
+		case strings.HasPrefix(line, "+++"):
 			if s.changes != nil {
 				// record the last state
 				changes[s.file] = s.changes
 			}
 			s = state{file: line[4:]}
-		case len(line) >= 3 && line[:3] == "@@ ":
+		case strings.HasPrefix(line, "@@ "):
 			//      @@ -1 +2,4 @@
 			// chdr ^^^^^^^^^^^^^
 			// ahdr       ^^^^
@@ -142,9 +143,9 @@ func (c Checker) linesChanged() map[string][]uint64 {
 				panic(err)
 			}
 			s.lineNo = cstart - 1 // -1 as cstart is the next line number
-		case len(line) > 0 && line[:1] == "-":
+		case strings.HasPrefix(line, "-"):
 			s.lineNo--
-		case len(line) > 0 && line[:1] == "+":
+		case strings.HasPrefix(line, "+"):
 			s.changes = append(s.changes, s.lineNo)
 		}
 
@@ -164,40 +165,33 @@ func GitPatch() (io.Reader, error) {
 	var patch bytes.Buffer
 
 	// check if git repo exists
-
-	err := exec.Command("git", "status").Run()
-	if err != nil {
-		return nil, nil
+	if err := exec.Command("git", "status").Run(); err != nil {
+		return nil, fmt.Errorf("error executing git status: %s", err)
 	}
-
-	var (
-		unstaged  bool
-		untracked bool
-	)
 
 	// check for unstaged changes
 	// use --no-prefix to remove b/ given: +++ b/main.go
-
 	cmd := exec.Command("git", "diff", "--no-prefix")
 	cmd.Stdout = &patch
 	if err := cmd.Run(); err != nil {
 		return nil, fmt.Errorf("error executing git diff: %s", err)
 	}
-	unstaged = patch.Len() > 0
+	// If git diff show unstaged changes, use that patch
+	if patch.Len() > 0 {
+		return &patch, nil
+	}
 
 	// make a patch from untracked files
-
 	ls, err := exec.Command("git", "ls-files", "-o").CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("error executing git ls-files: %s", err)
+	}
 	for _, file := range bytes.Split(ls, []byte{'\n'}) {
 		if len(file) == 0 {
 			continue
 		}
 		makePatch(string(file), &patch)
-		untracked = true
-	}
-
-	// If git diff show unstaged changes, use that patch
-	if unstaged || untracked {
+		// git ls-files show unpatched changes, use that patch
 		return &patch, nil
 	}
 
@@ -219,5 +213,5 @@ func makePatch(file string, patch io.Writer) {
 	cmd := exec.Command("diff", "-u", os.DevNull, file)
 	cmd.Stdout = patch
 	// ignore errors from cmd.Run(), this maybe an untracked due to binary file
-	_ = cmd.Run()
+	cmd.Run()
 }
