@@ -166,22 +166,25 @@ func GitPatch() (io.Reader, error) {
 
 	// check if git repo exists
 	if err := exec.Command("git", "status").Run(); err != nil {
-		return nil, fmt.Errorf("error executing git status: %s", err)
+		// don't return an error, we assume the error is not repo exists
+		return nil, nil
 	}
 
-	// check for unstaged changes
+	var (
+		unstaged  bool
+		untracked bool
+	)
+
+	// make a patch for unstaged changes
 	// use --no-prefix to remove b/ given: +++ b/main.go
 	cmd := exec.Command("git", "diff", "--no-prefix")
 	cmd.Stdout = &patch
 	if err := cmd.Run(); err != nil {
 		return nil, fmt.Errorf("error executing git diff: %s", err)
 	}
-	// If git diff show unstaged changes, use that patch
-	if patch.Len() > 0 {
-		return &patch, nil
-	}
+	unstaged = patch.Len() > 0
 
-	// make a patch from untracked files
+	// make a patch for untracked files
 	ls, err := exec.Command("git", "ls-files", "-o").CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("error executing git ls-files: %s", err)
@@ -191,7 +194,12 @@ func GitPatch() (io.Reader, error) {
 			continue
 		}
 		makePatch(string(file), &patch)
-		// git ls-files show unpatched changes, use that patch
+		untracked = true
+	}
+
+	// If there's unstaged changes OR untracked changes (or both), then this is
+	// a suitable patch
+	if unstaged || untracked {
 		return &patch, nil
 	}
 
