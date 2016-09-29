@@ -124,7 +124,7 @@ func (c Checker) linesChanged() map[string][]uint64 {
 		c.debug(line)
 		s.lineNo++
 		switch {
-		case strings.HasPrefix(line, "+++"):
+		case strings.HasPrefix(line, "+++ ") && len(line) > 4:
 			if s.changes != nil {
 				// record the last state
 				changes[s.file] = s.changes
