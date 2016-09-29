@@ -8,11 +8,10 @@ import (
 )
 
 func main() {
-
 	debug := flag.Bool("d", false, "Debug")
 	flag.Parse()
 
-	checker := revgrep.Checker{}
+	var checker revgrep.Checker
 
 	if *debug {
 		checker.Debug = os.Stdout
