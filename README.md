@@ -4,10 +4,6 @@
 
 `revgrep` is a CLI tool used to filter static analysis tools to only lines changed based on a commit reference.
 
-Note: requires a `diff` tool in PATH to generate a unified diff with the `-u` flag in path, such as GNU diff. This is
-used to generate a patch for files not in version control, and could be implemented internally without requiring
-dependency.
-
 # Install
 
 ```bash

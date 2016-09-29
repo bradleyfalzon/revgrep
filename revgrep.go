@@ -13,11 +13,14 @@ import (
 )
 
 type Checker struct {
-	// Unified patch file to read to detect lines being changed, if nil revgrep
+	// Patch file (unified) to read to detect lines being changed, if nil revgrep
 	// will attempt to detect the VCS and generate an appropriate patch. Auto
 	// detection will search for uncommitted changes first, if none found, will
 	// generate a patch from last committed change.
 	Patch io.Reader
+	// NewFiles is a list of file names (with absolute paths) where the entire
+	// contents of the file is new
+	NewFiles []string
 	// Debug sets the debug writer for additional output
 	Debug io.Writer
 }
@@ -35,7 +38,7 @@ func (c Checker) Check(reader io.Reader, writer io.Writer) int {
 	var writeAll bool
 	if c.Patch == nil {
 		var err error
-		c.Patch, err = GitPatch()
+		c.Patch, c.NewFiles, err = GitPatch()
 		if err != nil {
 			writeAll = true
 			c.debug("could not read git repo:", err)
@@ -79,9 +82,11 @@ func (c Checker) Check(reader io.Reader, writer io.Writer) int {
 			for _, fno := range fchanges {
 				if fno == lno {
 					changed = true
-					issueCount++
-					fmt.Fprintln(writer, scanner.Text())
 				}
+			}
+			if changed == true || fchanges == nil {
+				issueCount++
+				fmt.Fprintln(writer, scanner.Text())
 			}
 		}
 		if !changed {
@@ -113,6 +118,10 @@ func (c Checker) linesChanged() map[string][]uint64 {
 		s       state
 		changes = make(map[string][]uint64)
 	)
+
+	for _, file := range c.NewFiles {
+		changes[file] = nil
+	}
 
 	if c.Patch == nil {
 		return changes
@@ -161,46 +170,41 @@ func (c Checker) linesChanged() map[string][]uint64 {
 
 // GitPatch returns a patch from a git repository, if no git repository was
 // was found and no errors occurred, nil is returned, else an error is returned
-func GitPatch() (io.Reader, error) {
+func GitPatch() (io.Reader, []string, error) {
 	var patch bytes.Buffer
 
 	// check if git repo exists
 	if err := exec.Command("git", "status").Run(); err != nil {
 		// don't return an error, we assume the error is not repo exists
-		return nil, nil
+		return nil, nil, nil
 	}
-
-	var (
-		unstaged  bool
-		untracked bool
-	)
 
 	// make a patch for unstaged changes
 	// use --no-prefix to remove b/ given: +++ b/main.go
 	cmd := exec.Command("git", "diff", "--no-prefix")
 	cmd.Stdout = &patch
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("error executing git diff: %s", err)
+		return nil, nil, fmt.Errorf("error executing git diff: %s", err)
 	}
-	unstaged = patch.Len() > 0
+	unstaged := patch.Len() > 0
 
 	// make a patch for untracked files
+	var newFiles []string
 	ls, err := exec.Command("git", "ls-files", "-o").CombinedOutput()
 	if err != nil {
-		return nil, fmt.Errorf("error executing git ls-files: %s", err)
+		return nil, nil, fmt.Errorf("error executing git ls-files: %s", err)
 	}
 	for _, file := range bytes.Split(ls, []byte{'\n'}) {
 		if len(file) == 0 {
 			continue
 		}
-		makePatch(string(file), &patch)
-		untracked = true
+		newFiles = append(newFiles, string(file))
 	}
 
 	// If there's unstaged changes OR untracked changes (or both), then this is
 	// a suitable patch
-	if unstaged || untracked {
-		return &patch, nil
+	if unstaged || newFiles != nil {
+		return &patch, newFiles, nil
 	}
 
 	// check for changes in recent commit
@@ -208,18 +212,8 @@ func GitPatch() (io.Reader, error) {
 	cmd = exec.Command("git", "diff", "--no-prefix", "HEAD~")
 	cmd.Stdout = &patch
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("error executing git diff: %s", err)
+		return nil, nil, fmt.Errorf("error executing git diff: %s", err)
 	}
 
-	return &patch, nil
-}
-
-// makePatch makes a patch from a file on the file system, writes to patch
-// TODO this shouldn't require an external dependency and could be refactored
-// into a different method
-func makePatch(file string, patch io.Writer) {
-	cmd := exec.Command("diff", "-u", os.DevNull, file)
-	cmd.Stdout = patch
-	// ignore errors from cmd.Run(), this maybe an untracked due to binary file
-	cmd.Run()
+	return &patch, nil, nil
 }

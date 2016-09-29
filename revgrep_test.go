@@ -69,7 +69,7 @@ func TestGitPatch(t *testing.T) {
 
 	// Test for unstaged changes
 
-	patch, err := GitPatch()
+	patch, newfiles, err := GitPatch()
 	if err != nil {
 		t.Fatalf("unexpected error from git: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestGitPatch(t *testing.T) {
 
 	// Test for last commit
 
-	patch, err = GitPatch()
+	patch, _, err = GitPatch()
 	if err != nil {
 		t.Fatalf("unexpected error from git: %v", err)
 	}
@@ -110,12 +110,15 @@ func TestGitPatch(t *testing.T) {
 
 	// Test for handling non git dir
 
-	patch, err = GitPatch()
+	patch, newfiles, err = GitPatch()
 	if err != nil {
 		t.Fatalf("unexpected error from git: %v", err)
 	}
 	if patch != nil {
 		t.Fatalf("expected nil, got %v", patch)
+	}
+	if newfiles != nil {
+		t.Fatalf("expected nil, got %v", newfiles)
 	}
 
 }
@@ -124,17 +127,13 @@ func TestGitPatchUntracked(t *testing.T) {
 	prevwd := setup(t)
 	defer teardown(t, prevwd)
 
-	exp := []byte(`+var _ = fmt.Sprintf("untracked %v") // untracked.go:2: missing argument for Sprintf("untracked %v")...`)
-
 	// Test for unstaged changes
 
-	patch, err := GitPatch()
+	_, newfiles, err := GitPatch()
 	if err != nil {
 		t.Fatalf("unexpected error from git: %v", err)
 	}
-	if !bytes.Contains(patch.(*bytes.Buffer).Bytes(), exp) {
-		t.Fatalf("GitPatch did not detect untracked changes\n%s\ndoes not contain: %s",
-			patch.(*bytes.Buffer).Bytes(), exp,
-		)
+	if len(newfiles) != 1 || newfiles[0] != "untracked.go" {
+		t.Fatalf("GitPatch did not detect untracked.go, got: %#v", newfiles)
 	}
 }
