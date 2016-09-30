@@ -13,7 +13,7 @@ go get -u github.com/bradleyfalzon/revgrep/...
 # Usage
 
 In the scenario below, a change was made causing a warning in `go vet` on line 5, but `go vet` will show all warnings.
-Using `regrep`, you can show only warnings for lines of code that have been changed (in this case, hiding line 6).
+Using `revgrep`, you can show only warnings for lines of code that have been changed (in this case, hiding line 6).
 
 ```bash
 [user@host dir (master)]$ go vet
