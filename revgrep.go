@@ -212,7 +212,7 @@ func GitPatch() (io.Reader, []string, error) {
 	cmd = exec.Command("git", "diff", "--no-prefix", "HEAD~")
 	cmd.Stdout = &patch
 	if err := cmd.Run(); err != nil {
-		return nil, nil, fmt.Errorf("error executing git diff: %s", err)
+		return nil, nil, fmt.Errorf("error executing git diff HEAD~: %s", err)
 	}
 
 	return &patch, nil, nil

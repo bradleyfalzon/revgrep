@@ -1,33 +1,35 @@
 package revgrep
 
 import (
+	"bufio"
 	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
-func setup(t *testing.T) (prevwd string) {
+func setup(t *testing.T, stage, subdir string) (prevwd string, sample []byte) {
 	wd, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("could not get working dir: %s", err)
 	}
 
 	// Execute make
-	cmd := exec.Command("./make.sh")
+	cmd := exec.Command("./make.sh", stage)
 	cmd.Dir = filepath.Join(wd, "testdata")
-	err = cmd.Run()
+	sample, err = cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("could not run make.sh: %v", err)
+		t.Fatalf("could not run make.sh: %v, output:\n%s", err, sample)
 	}
 
 	// chdir so the vcs exec commands read the correct testdata
-	err = os.Chdir(filepath.Join(wd, "testdata", "git"))
+	err = os.Chdir(filepath.Join(wd, "testdata", "git", subdir))
 	if err != nil {
 		t.Fatalf("could not chdir: %v", err)
 	}
-	return wd
+	return wd, sample
 }
 
 func teardown(t *testing.T, wd string) {
@@ -37,103 +39,64 @@ func teardown(t *testing.T, wd string) {
 	}
 }
 
-// TestChanges is a complete test using testdata
 func TestChanges(t *testing.T) {
-	prevwd := setup(t)
-	defer teardown(t, prevwd)
-
-	writer := bytes.NewBuffer([]byte{})
-	reader := bytes.NewBufferString(`main.go:3: missing argument
-main.go:9999: missing argument
-`)
-	exp := "main.go:3: missing argument\n"
-
-	// the vcs (thanks to make.sh) will alert us line 3 has changed
-	// reader shows multiple lines are affected
-	// writer should just have the lines changes according to vcs
-	// exp is what's expected
-	checker := Checker{}
-	checker.Check(reader, writer)
-
-	if writer.String() != exp {
-		t.Errorf("exp:\n%q\ngot:\n%q\n", exp, writer.String())
+	tests := map[string]struct {
+		subdir string
+		exp    []string // file:linenumber including trailing space
+	}{
+		"2-untracked":            {"", []string{"main.go:3:"}},
+		"3-untracked-subdir":     {"", []string{"main.go:3:", "subdir/main.go:3:"}},
+		"3-untracked-subdir-cwd": {"subdir", []string{"main.go:3:"}},
+		"4-commit":               {"", []string{"main.go:3:", "subdir/main.go:3:"}},
+		"5-unstaged-no-warning":  {"", nil},
+		"6-unstaged":             {"", []string{"main.go:6:"}},
 	}
 
+	for stage, test := range tests {
+		prevwd, sample := setup(t, stage, test.subdir)
+
+		reader := bytes.NewBuffer(sample)
+		var out bytes.Buffer
+
+		c := Checker{}
+		_ = c.Check(reader, &out)
+
+		scanner := bufio.NewScanner(&out)
+		var i int
+		for i = 0; scanner.Scan(); i++ {
+			line := scanner.Text()
+
+			if i > len(test.exp)-1 {
+				t.Errorf("%v: unexpected line: %q", stage, line)
+			} else {
+				if !strings.HasPrefix(line, test.exp[i]) {
+					t.Errorf("%v: line does not have prefix: %q line: %q", stage, test.exp[i], line)
+				}
+			}
+
+		}
+		if i != len(test.exp) {
+			t.Errorf("%v: i %v, expected %v", stage, i, len(test.exp))
+		}
+		teardown(t, prevwd)
+	}
 }
 
-func TestGitPatch(t *testing.T) {
-	prevwd := setup(t)
-	defer teardown(t, prevwd)
-
-	exp := []byte(`+var _ = fmt.Sprintf("%s") // main.go:3: missing argument for Sprintf("%s")...`)
-
-	// Test for unstaged changes
-
-	patch, newfiles, err := GitPatch()
-	if err != nil {
-		t.Fatalf("unexpected error from git: %v", err)
-	}
-	if !bytes.Contains(patch.(*bytes.Buffer).Bytes(), exp) {
-		t.Fatalf("GitPatch did not detect unstaged changes")
-	}
-
-	// Commit
-
-	err = exec.Command("git", "add", ".").Run()
-	if err != nil {
-		t.Fatalf("could not commit changes: %v", err)
-	}
-
-	err = exec.Command("git", "commit", "-am", "TestGitPatch").Run()
-	if err != nil {
-		t.Fatalf("could not commit changes: %v", err)
-	}
-
-	// Test for last commit
-
-	patch, _, err = GitPatch()
-	if err != nil {
-		t.Fatalf("unexpected error from git: %v", err)
-	}
-	if !bytes.Contains(patch.(*bytes.Buffer).Bytes(), exp) {
-		t.Fatalf("GitPatch did not detect committed changes\n%s\ndoes not contain: %s",
-			patch.(*bytes.Buffer).Bytes(), exp,
-		)
-	}
-
+func TestGitPatchNonGitDir(t *testing.T) {
 	// Change to non-git dir
-
-	err = os.Chdir("/")
+	err := os.Chdir("/")
 	if err != nil {
 		t.Fatalf("could not chdir: %v", err)
 	}
 
-	// Test for handling non git dir
-
-	patch, newfiles, err = GitPatch()
+	patch, newfiles, err := GitPatch()
 	if err != nil {
-		t.Fatalf("unexpected error from git: %v", err)
+		t.Errorf("error expected nil, got: %v", err)
 	}
 	if patch != nil {
-		t.Fatalf("expected nil, got %v", patch)
+		t.Errorf("patch expected nil, got: %v", patch)
 	}
 	if newfiles != nil {
-		t.Fatalf("expected nil, got %v", newfiles)
-	}
-
-}
-
-func TestGitPatchUntracked(t *testing.T) {
-	prevwd := setup(t)
-	defer teardown(t, prevwd)
-
-	// Test for unstaged changes
-
-	_, newfiles, err := GitPatch()
-	if err != nil {
-		t.Fatalf("unexpected error from git: %v", err)
-	}
-	if len(newfiles) != 1 || newfiles[0] != "untracked.go" {
-		t.Fatalf("GitPatch did not detect untracked.go, got: %#v", newfiles)
+		t.Errorf("newFiles expected nil, got: %v", newfiles)
 	}
 }

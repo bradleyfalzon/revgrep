@@ -1,35 +1,73 @@
 #!/usr/bin/env bash
-set -eu
+set -u
 
 if [[ "$(basename $(pwd))" != "testdata" ]]; then
     echo Run for testdata dir
     exit 1
 fi
 
-[[ -d git ]] && rm -rf git
+function close() {
+    go vet ./...
+    exit 0
+}
 
-mkdir git && cd git
-git init
+[[ -d git ]] && rm -rf git
+mkdir -p git/subdir && cd git
+
+# No git directory
+
+[[ "$1" == "1-non-git-dir" ]] && exit
+
+# Untracked files
+
+git init > /dev/null
 git config --local user.name "testdata"
 git config --local user.email "testdata@example.com"
+touch readme
+git add .
+git commit -m "Initial commit" > /dev/null
 
-# Initial commit
 cat > main.go <<EOF
 package main
-EOF
-
-git add .
-git commit -m "Initial commit"
-
-# Unstage changes with go vet warning
-cat >> main.go <<EOF
 import "fmt"
-var _ = fmt.Sprintf("%s") // main.go:3: missing argument for Sprintf("%s")...
+var _ = fmt.Sprintf("2-untracked %s")
 func main() {}
 EOF
 
-# Untracked changes with go vet warning
-cat > untracked.go <<EOF
+[[ "$1" == "2-untracked" ]] && close
+
+# Untracked files with sub dir
+
+cat > subdir/main.go <<EOF
 package main
-var _ = fmt.Sprintf("untracked %v") // untracked.go:2: missing argument for Sprintf("untracked %v")...
+import "fmt"
+var _ = fmt.Sprintf("3-untracked-subdir %s")
+func main() {}
 EOF
+
+[[ "$1" == "3-untracked-subdir" ]] && close
+
+# Placeholder for test to change to sub directory
+
+[[ "$1" == "3-untracked-subdir-cwd" ]] && close
+
+# Commit
+
+git add .
+git commit -m "Second commit" > /dev/null
+
+[[ "$1" == "4-commit" ]] && close
+
+# Unstage changes without warning
+
+cat >> main.go <<EOF
+var _ = fmt.Sprintln("5-unstaged-no-warning")
+EOF
+
+[[ "$1" == "5-unstaged-no-warning" ]] && close
+
+cat >> main.go <<EOF
+var _ = fmt.Sprintf("6-unstaged %s")
+EOF
+
+[[ "$1" == "6-unstaged" ]] && close
