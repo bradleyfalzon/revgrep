@@ -23,6 +23,12 @@ type Checker struct {
 	NewFiles []string
 	// Debug sets the debug writer for additional output
 	Debug io.Writer
+	// RevisionFrom check revision starting at, leave blank for auto detection
+	// ignored if patch is set
+	RevisionFrom string
+	// RevisionTo checks revision finishing at, leave blank for auto detection
+	// ignored if patch is set
+	RevisionTo string
 }
 
 var (
@@ -38,7 +44,7 @@ func (c Checker) Check(reader io.Reader, writer io.Writer) int {
 	var writeAll bool
 	if c.Patch == nil {
 		var err error
-		c.Patch, c.NewFiles, err = GitPatch()
+		c.Patch, c.NewFiles, err = GitPatch(c.RevisionFrom, c.RevisionTo)
 		if err != nil {
 			writeAll = true
 			c.debug("could not read git repo:", err)
@@ -170,7 +176,13 @@ func (c Checker) linesChanged() map[string][]uint64 {
 
 // GitPatch returns a patch from a git repository, if no git repository was
 // was found and no errors occurred, nil is returned, else an error is returned
-func GitPatch() (io.Reader, []string, error) {
+// revisionFrom and revisionTo defines the git diff parameters, if left blank
+// and there are unstaged changes or untracked files, only those will be returned
+// else only check changes since HEAD~. If revisionFrom is set but revisionTo
+// is not, untracked files will be included, to exclude untracked files set
+// revisionTo to HEAD~. It's incorrect to specify revisionTo without a
+// revisionFrom.
+func GitPatch(revisionFrom, revisionTo string) (io.Reader, []string, error) {
 	var patch bytes.Buffer
 
 	// check if git repo exists
@@ -178,15 +190,6 @@ func GitPatch() (io.Reader, []string, error) {
 		// don't return an error, we assume the error is not repo exists
 		return nil, nil, nil
 	}
-
-	// make a patch for unstaged changes
-	// use --no-prefix to remove b/ given: +++ b/main.go
-	cmd := exec.Command("git", "diff", "--no-prefix")
-	cmd.Stdout = &patch
-	if err := cmd.Run(); err != nil {
-		return nil, nil, fmt.Errorf("error executing git diff: %s", err)
-	}
-	unstaged := patch.Len() > 0
 
 	// make a patch for untracked files
 	var newFiles []string
@@ -200,6 +203,28 @@ func GitPatch() (io.Reader, []string, error) {
 		}
 		newFiles = append(newFiles, string(file))
 	}
+
+	if revisionFrom != "" {
+		cmd := exec.Command("git", "diff", "--no-prefix", revisionFrom, revisionTo)
+		cmd.Stdout = &patch
+		if err := cmd.Run(); err != nil {
+			return nil, nil, fmt.Errorf("error executing git diff %q %q: %s", revisionFrom, revisionTo, err)
+		}
+
+		if revisionTo == "" {
+			return &patch, newFiles, nil
+		}
+		return &patch, nil, nil
+	}
+
+	// make a patch for unstaged changes
+	// use --no-prefix to remove b/ given: +++ b/main.go
+	cmd := exec.Command("git", "diff", "--no-prefix")
+	cmd.Stdout = &patch
+	if err := cmd.Run(); err != nil {
+		return nil, nil, fmt.Errorf("error executing git diff: %s", err)
+	}
+	unstaged := patch.Len() > 0
 
 	// If there's unstaged changes OR untracked changes (or both), then this is
 	// a suitable patch

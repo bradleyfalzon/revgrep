@@ -41,15 +41,25 @@ func teardown(t *testing.T, wd string) {
 
 func TestChanges(t *testing.T) {
 	tests := map[string]struct {
-		subdir string
-		exp    []string // file:linenumber including trailing space
+		subdir  string
+		exp     []string // file:linenumber including trailing space
+		revFrom string
+		revTo   string
 	}{
-		"2-untracked":            {"", []string{"main.go:3:"}},
-		"3-untracked-subdir":     {"", []string{"main.go:3:", "subdir/main.go:3:"}},
-		"3-untracked-subdir-cwd": {"subdir", []string{"main.go:3:"}},
-		"4-commit":               {"", []string{"main.go:3:", "subdir/main.go:3:"}},
-		"5-unstaged-no-warning":  {"", nil},
-		"6-unstaged":             {"", []string{"main.go:6:"}},
+		"2-untracked":            {"", []string{"main.go:3:"}, "", ""},
+		"3-untracked-subdir":     {"", []string{"main.go:3:", "subdir/main.go:3:"}, "", ""},
+		"3-untracked-subdir-cwd": {"subdir", []string{"main.go:3:"}, "", ""},
+		"4-commit":               {"", []string{"main.go:3:", "subdir/main.go:3:"}, "", ""},
+		"5-unstaged-no-warning":  {"", nil, "", ""},
+		"6-unstaged":             {"", []string{"main.go:6:"}, "", ""},
+		// From first commit, all changes should be shown
+		"7-commit": {"", []string{"main.go:3:", "main.go:6:", "subdir/main.go:3:"}, "HEAD~2", ""},
+		// From first commit+unstaged, all changes should be shown
+		"8-unstaged": {"", []string{"main.go:3:", "main.go:6:", "main.go:7:", "subdir/main.go:3:"}, "HEAD~2", ""},
+		// From first commit+unstaged+untracked, all changes should be shown
+		"9-untracked": {"", []string{"main.go:3:", "main.go:6:", "main.go:7:", "main2.go:2:", "subdir/main.go:3:"}, "HEAD~2", ""},
+		// From first commit to last commit, all changes should be shown except unstaged, untracked
+		"10-committed": {"", []string{"main.go:3:", "main.go:6:", "subdir/main.go:3:"}, "HEAD~2", "HEAD~0"},
 	}
 
 	for stage, test := range tests {
@@ -58,7 +68,10 @@ func TestChanges(t *testing.T) {
 		reader := bytes.NewBuffer(sample)
 		var out bytes.Buffer
 
-		c := Checker{}
+		c := Checker{
+			RevisionFrom: test.revFrom,
+			RevisionTo:   test.revTo,
+		}
 		_ = c.Check(reader, &out)
 
 		scanner := bufio.NewScanner(&out)
@@ -89,7 +102,7 @@ func TestGitPatchNonGitDir(t *testing.T) {
 		t.Fatalf("could not chdir: %v", err)
 	}
 
-	patch, newfiles, err := GitPatch()
+	patch, newfiles, err := GitPatch("", "")
 	if err != nil {
 		t.Errorf("error expected nil, got: %v", err)
 	}

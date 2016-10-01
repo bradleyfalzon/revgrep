@@ -54,7 +54,7 @@ EOF
 # Commit
 
 git add .
-git commit -m "Second commit" > /dev/null
+git commit -m "Commit" > /dev/null
 
 [[ "$1" == "4-commit" ]] && close
 
@@ -71,3 +71,27 @@ var _ = fmt.Sprintf("6-unstaged %s")
 EOF
 
 [[ "$1" == "6-unstaged" ]] && close
+
+# Commit all changes
+
+git add .
+git commit -m "Commit" > /dev/null
+
+[[ "$1" == "7-commit" ]] && close
+
+cat >> main.go <<EOF
+var _ = fmt.Sprintf("8-unstaged %s")
+EOF
+
+[[ "$1" == "8-unstaged" ]] && close
+
+cat > main2.go <<EOF
+package main
+var _ = fmt.Sprintf("9-untracked %s")
+EOF
+
+[[ "$1" == "9-untracked" ]] && close
+
+# Placeholder for test to check committed changes
+
+[[ "$1" == "10-committed" ]] && close
