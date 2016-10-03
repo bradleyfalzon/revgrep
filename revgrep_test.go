@@ -52,14 +52,14 @@ func TestChanges(t *testing.T) {
 		"4-commit":               {"", []string{"main.go:3:", "subdir/main.go:3:"}, "", ""},
 		"5-unstaged-no-warning":  {"", nil, "", ""},
 		"6-unstaged":             {"", []string{"main.go:6:"}, "", ""},
-		// From first commit, all changes should be shown
-		"7-commit": {"", []string{"main.go:3:", "main.go:6:", "subdir/main.go:3:"}, "HEAD~2", ""},
-		// From first commit+unstaged, all changes should be shown
-		"8-unstaged": {"", []string{"main.go:3:", "main.go:6:", "main.go:7:", "subdir/main.go:3:"}, "HEAD~2", ""},
-		// From first commit+unstaged+untracked, all changes should be shown
-		"9-untracked": {"", []string{"main.go:3:", "main.go:6:", "main.go:7:", "main2.go:2:", "subdir/main.go:3:"}, "HEAD~2", ""},
-		// From first commit to last commit, all changes should be shown except unstaged, untracked
-		"10-committed": {"", []string{"main.go:3:", "main.go:6:", "subdir/main.go:3:"}, "HEAD~2", "HEAD~0"},
+		// From a commit, all changes should be shown
+		"7-commit": {"", []string{"main.go:6:"}, "HEAD~1", ""},
+		// From a commit+unstaged, all changes should be shown
+		"8-unstaged": {"", []string{"main.go:6:", "main.go:7:"}, "HEAD~1", ""},
+		// From a commit+unstaged+untracked, all changes should be shown
+		"9-untracked": {"", []string{"main.go:6:", "main.go:7:", "main2.go:2:"}, "HEAD~1", ""},
+		// From a commit to last commit, all changes should be shown except recent unstaged, untracked
+		"10-committed": {"", []string{"main.go:6:"}, "HEAD~1", "HEAD~0"},
 	}
 
 	for stage, test := range tests {

@@ -29,3 +29,5 @@ main.go:5: missing argument for Sprintf("%s"): format reads arg 1, have only 0 a
 
 `revgrep` CLI tool will return an exit status of 1 if any issues match, else it will return 0. Consider using
 `${PIPESTATUS[0]}` for the exit status of the `go vet` command in the above example.
+
+See `-help` for additional options regarding specifying revisions.

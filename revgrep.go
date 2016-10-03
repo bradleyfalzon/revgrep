@@ -205,7 +205,15 @@ func GitPatch(revisionFrom, revisionTo string) (io.Reader, []string, error) {
 	}
 
 	if revisionFrom != "" {
-		cmd := exec.Command("git", "diff", "--no-prefix", revisionFrom, revisionTo)
+		cmd := exec.Command("git", "diff", "--no-prefix")
+		if revisionFrom != "" {
+			cmd.Args = append(cmd.Args, revisionFrom)
+
+			// it's not valid to specify To without From
+			if revisionTo != "" {
+				cmd.Args = append(cmd.Args, revisionTo)
+			}
+		}
 		cmd.Stdout = &patch
 		if err := cmd.Run(); err != nil {
 			return nil, nil, fmt.Errorf("error executing git diff %q %q: %s", revisionFrom, revisionTo, err)

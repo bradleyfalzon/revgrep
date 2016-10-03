@@ -9,9 +9,14 @@ import (
 
 func main() {
 	debug := flag.Bool("d", false, "Debug")
+	revFrom := flag.String("from", "", "Filter issues to lines changed since (and including) this revision")
+	revTo := flag.String("to", "", "Filter issues to lines changed since (and including) this revision (requires -from to be set)")
 	flag.Parse()
 
-	var checker revgrep.Checker
+	checker := revgrep.Checker{
+		RevisionFrom: *revFrom,
+		RevisionTo:   *revTo,
+	}
 
 	if *debug {
 		checker.Debug = os.Stdout
