@@ -95,3 +95,10 @@ EOF
 # Placeholder for test to check committed changes
 
 [[ "$1" == "10-committed" ]] && close
+
+# Display absolute path
+
+if [[ "$1" == "11-abs-path" ]]; then
+    go vet |& sed -r "s:(.*\.go):$(pwd)/\1:g"
+    exit
+fi

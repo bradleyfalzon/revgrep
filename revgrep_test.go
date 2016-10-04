@@ -60,6 +60,8 @@ func TestChanges(t *testing.T) {
 		"9-untracked": {"", []string{"main.go:6:", "main.go:7:", "main2.go:2:"}, "HEAD~1", ""},
 		// From a commit to last commit, all changes should be shown except recent unstaged, untracked
 		"10-committed": {"", []string{"main.go:6:"}, "HEAD~1", "HEAD~0"},
+		// static analysis tools with absolute paths should be handled
+		"11-abs-path": {"", []string{"main.go:6:"}, "HEAD~1", "HEAD~0"},
 	}
 
 	for stage, test := range tests {
@@ -77,7 +79,8 @@ func TestChanges(t *testing.T) {
 		scanner := bufio.NewScanner(&out)
 		var i int
 		for i = 0; scanner.Scan(); i++ {
-			line := scanner.Text()
+			// Rewrite abs paths to for simpler matching
+			line := rewriteAbs(scanner.Text())
 
 			if i > len(test.exp)-1 {
 				t.Errorf("%v: unexpected line: %q", stage, line)
@@ -86,13 +89,20 @@ func TestChanges(t *testing.T) {
 					t.Errorf("%v: line does not have prefix: %q line: %q", stage, test.exp[i], line)
 				}
 			}
-
 		}
 		if i != len(test.exp) {
 			t.Errorf("%v: i %v, expected %v", stage, i, len(test.exp))
 		}
 		teardown(t, prevwd)
 	}
+}
+
+func rewriteAbs(line string) string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		panic(err)
+	}
+	return strings.TrimPrefix(line, cwd+"/")
 }
 
 func TestGitPatchNonGitDir(t *testing.T) {

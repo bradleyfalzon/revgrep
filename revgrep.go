@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -16,7 +17,8 @@ type Checker struct {
 	// Patch file (unified) to read to detect lines being changed, if nil revgrep
 	// will attempt to detect the VCS and generate an appropriate patch. Auto
 	// detection will search for uncommitted changes first, if none found, will
-	// generate a patch from last committed change.
+	// generate a patch from last committed change. File paths within patches
+	// must be relative to current working directory.
 	Patch io.Reader
 	// NewFiles is a list of file names (with absolute paths) where the entire
 	// contents of the file is new
@@ -39,6 +41,8 @@ var (
 // Check scans reader and writes any lines to writer that have been added in
 // Checker.Patch. Returns number of issues written to writer. If no VCS could
 // be found or other VCS errors occur, all issues are written to writer.
+// File paths in reader must be relative to current working directory or
+// absolute.
 func (c Checker) Check(reader io.Reader, writer io.Writer) int {
 	// Check if patch is supplied, if not, retrieve from VCS
 	var writeAll bool
@@ -59,6 +63,11 @@ func (c Checker) Check(reader io.Reader, writer io.Writer) int {
 	// checking for recent changes
 	linesChanged := c.linesChanged()
 	c.debug(fmt.Sprintf("lines changed: %+v", linesChanged))
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		c.debug(fmt.Sprintf("could not get current working directory: %s", err))
+	}
 
 	// Scan each line in reader and only write those lines if lines changed
 	var issueCount int
@@ -82,8 +91,15 @@ func (c Checker) Check(reader io.Reader, writer io.Writer) int {
 			continue
 		}
 
+		// Make absolute path names relative
+		path := string(line[1])
+		if rel, err := filepath.Rel(cwd, path); err == nil {
+			c.debug("rewrote path from %q to %q", path, rel)
+			path = rel
+		}
+
 		var changed bool
-		if fchanges, ok := linesChanged[string(line[1])]; ok {
+		if fchanges, ok := linesChanged[path]; ok {
 			// found file, see if lines matched
 			for _, fno := range fchanges {
 				if fno == lno {
