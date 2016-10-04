@@ -198,21 +198,19 @@ func GitPatch(revisionFrom, revisionTo string) (io.Reader, []string, error) {
 		return nil, nil, fmt.Errorf("error executing git ls-files: %s", err)
 	}
 	for _, file := range bytes.Split(ls, []byte{'\n'}) {
-		if len(file) == 0 {
+		if len(file) == 0 || bytes.HasSuffix(file, []byte{'/'}) {
+			// ls-files was sometimes showing directories when they were ignored
+			// I couldn't create a test case for this as I couldn't reproduce correctly
+			// for the moment, just exclude files with trailing /
 			continue
 		}
 		newFiles = append(newFiles, string(file))
 	}
 
 	if revisionFrom != "" {
-		cmd := exec.Command("git", "diff", "--no-prefix")
-		if revisionFrom != "" {
-			cmd.Args = append(cmd.Args, revisionFrom)
-
-			// it's not valid to specify To without From
-			if revisionTo != "" {
-				cmd.Args = append(cmd.Args, revisionTo)
-			}
+		cmd := exec.Command("git", "diff", "--no-prefix", revisionFrom)
+		if revisionTo != "" {
+			cmd.Args = append(cmd.Args, revisionTo)
 		}
 		cmd.Stdout = &patch
 		if err := cmd.Run(); err != nil {
