@@ -31,3 +31,15 @@ main.go:5: missing argument for Sprintf("%s"): format reads arg 1, have only 0 a
 `${PIPESTATUS[0]}` for the exit status of the `go vet` command in the above example.
 
 See `-help` for additional options regarding specifying revisions.
+
+# Other Examples
+
+Issues between branches:
+```bash
+[user@host dir (feature/branch)]$ go vet |& revgrep master
+```
+
+Issues since last push:
+```bash
+[user@host dir (master)]$ go vet |& revgrep origin/master
+```
