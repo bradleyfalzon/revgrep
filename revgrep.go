@@ -38,8 +38,8 @@ type Issue struct {
 	// File is the name of the file as it appeared from the patch
 	File string
 	// LineNo is the line number of the file
-	LineNo uint
-	// hunkPosition is position from first @@ in hunk
+	LineNo int
+	// hunkPosition is position from first file's @@
 	// https://developer.github.com/v3/pulls/comments/#create-a-comment
 	HunkPos int
 	// Issue text as it appeared from the tool
@@ -123,24 +123,24 @@ func (c Checker) Check(reader io.Reader, writer io.Writer) (issues []Issue) {
 		if fchanges, ok := linesChanged[path]; ok {
 			// found file, see if lines matched
 			for _, pos := range fchanges {
-				if pos.line == lno {
+				if pos.lineNo == int(lno) {
 					fpos = pos
 					changed = true
 				}
 			}
 			if changed == true || fchanges == nil {
+				// either file changed or it's a new file
 				issue := Issue{
-					File:   path,
-					LineNo: uint(fpos.line),
-					//HunkPos: changed.hunk,
-					HunkPos: int(fpos.line),
+					File:    path,
+					LineNo:  fpos.lineNo,
+					HunkPos: fpos.lineNo,
 					Issue:   scanner.Text(),
 				}
 				if changed == true {
-					issue.HunkPos = fpos.hunk
+					// file changed
+					issue.HunkPos = fpos.hunkPos
 				}
 				issues = append(issues, issue)
-
 				fmt.Fprintln(writer, scanner.Text())
 			}
 		}
@@ -162,17 +162,17 @@ func (c Checker) debug(s ...interface{}) {
 }
 
 type pos struct {
-	line uint64 // line number
-	hunk int    // position relative to first @@ in file
+	lineNo  int // line number
+	hunkPos int // position relative to first @@ in file
 }
 
 // linesChanges returns a map of file names to line numbers being changed
 func (c Checker) linesChanged() map[string][]pos {
 	type state struct {
 		file    string
-		lineNo  uint64 // current line number within chunk
-		hunk    int    // current line count since first @@ in file
-		changes []pos  // position of changes
+		lineNo  int   // current line number within chunk
+		hunkPos int   // current line count since first @@ in file
+		changes []pos // position of changes
 	}
 
 	var (
@@ -213,15 +213,15 @@ func (c Checker) linesChanged() map[string][]pos {
 			if err != nil {
 				panic(err)
 			}
-			s.lineNo = cstart - 1 // -1 as cstart is the next line number
+			s.lineNo = int(cstart) - 1 // -1 as cstart is the next line number
 		case strings.HasPrefix(line, " "):
-			s.hunk++
+			s.hunkPos++
 		case strings.HasPrefix(line, "-"):
-			s.hunk++
+			s.hunkPos++
 			s.lineNo--
 		case strings.HasPrefix(line, "+"):
-			s.hunk++
-			s.changes = append(s.changes, pos{line: s.lineNo, hunk: s.hunk})
+			s.hunkPos++
+			s.changes = append(s.changes, pos{lineNo: s.lineNo, hunkPos: s.hunkPos})
 		}
 
 	}
