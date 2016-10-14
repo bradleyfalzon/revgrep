@@ -160,7 +160,8 @@ func (c Checker) linesChanged() map[string][]uint64 {
 				// record the last state
 				changes[s.file] = s.changes
 			}
-			s = state{file: line[4:]}
+			// 6 removes "+++ b/"
+			s = state{file: line[6:]}
 		case strings.HasPrefix(line, "@@ "):
 			//      @@ -1 +2,4 @@
 			// chdr ^^^^^^^^^^^^^
@@ -224,7 +225,7 @@ func GitPatch(revisionFrom, revisionTo string) (io.Reader, []string, error) {
 	}
 
 	if revisionFrom != "" {
-		cmd := exec.Command("git", "diff", "--no-prefix", revisionFrom)
+		cmd := exec.Command("git", "diff", revisionFrom)
 		if revisionTo != "" {
 			cmd.Args = append(cmd.Args, revisionTo)
 		}
@@ -241,7 +242,7 @@ func GitPatch(revisionFrom, revisionTo string) (io.Reader, []string, error) {
 
 	// make a patch for unstaged changes
 	// use --no-prefix to remove b/ given: +++ b/main.go
-	cmd := exec.Command("git", "diff", "--no-prefix")
+	cmd := exec.Command("git", "diff")
 	cmd.Stdout = &patch
 	if err := cmd.Run(); err != nil {
 		return nil, nil, fmt.Errorf("error executing git diff: %s", err)
@@ -256,7 +257,7 @@ func GitPatch(revisionFrom, revisionTo string) (io.Reader, []string, error) {
 
 	// check for changes in recent commit
 
-	cmd = exec.Command("git", "diff", "--no-prefix", "HEAD~")
+	cmd = exec.Command("git", "diff", "HEAD~")
 	cmd.Stdout = &patch
 	if err := cmd.Run(); err != nil {
 		return nil, nil, fmt.Errorf("error executing git diff HEAD~: %s", err)
