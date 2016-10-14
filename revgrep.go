@@ -33,17 +33,36 @@ type Checker struct {
 	RevisionTo string
 }
 
+// Issue contains metadata about an issue found
+type Issue struct {
+	// File is the name of the file as it appeared from the patch
+	File string
+	// LineNo is the line number of the file
+	LineNo uint
+	// hunkPosition is position from first @@ in hunk
+	// https://developer.github.com/v3/pulls/comments/#create-a-comment
+	HunkPos int
+	// Issue text as it appeared from the tool
+	Issue string
+}
+
 var (
 	// file:lineNumber
 	lineRE = regexp.MustCompile("^(.*):([0-9]+)")
 )
 
+// TODO edit this
 // Check scans reader and writes any lines to writer that have been added in
-// Checker.Patch. Returns number of issues written to writer. If no VCS could
-// be found or other VCS errors occur, all issues are written to writer.
+// Checker.Patch.
+//
+// Returns number of issues written to writer.
+//
+// If no VCS could be found or other VCS errors occur, all issues are written
+// to writer.
+//
 // File paths in reader must be relative to current working directory or
 // absolute.
-func (c Checker) Check(reader io.Reader, writer io.Writer) int {
+func (c Checker) Check(reader io.Reader, writer io.Writer) (issues []Issue) {
 	// Check if patch is supplied, if not, retrieve from VCS
 	var writeAll bool
 	if c.Patch == nil {
@@ -70,7 +89,6 @@ func (c Checker) Check(reader io.Reader, writer io.Writer) int {
 	}
 
 	// Scan each line in reader and only write those lines if lines changed
-	var issueCount int
 	scanner := bufio.NewScanner(reader)
 	for scanner.Scan() {
 		line := lineRE.FindSubmatch(scanner.Bytes())
@@ -98,16 +116,31 @@ func (c Checker) Check(reader io.Reader, writer io.Writer) int {
 			path = rel
 		}
 
-		var changed bool
+		var (
+			fpos    pos
+			changed bool
+		)
 		if fchanges, ok := linesChanged[path]; ok {
 			// found file, see if lines matched
-			for _, fno := range fchanges {
-				if fno == lno {
+			for _, pos := range fchanges {
+				if pos.line == lno {
+					fpos = pos
 					changed = true
 				}
 			}
 			if changed == true || fchanges == nil {
-				issueCount++
+				issue := Issue{
+					File:   path,
+					LineNo: uint(fpos.line),
+					//HunkPos: changed.hunk,
+					HunkPos: int(fpos.line),
+					Issue:   scanner.Text(),
+				}
+				if changed == true {
+					issue.HunkPos = fpos.hunk
+				}
+				issues = append(issues, issue)
+
 				fmt.Fprintln(writer, scanner.Text())
 			}
 		}
@@ -118,7 +151,7 @@ func (c Checker) Check(reader io.Reader, writer io.Writer) int {
 	if err := scanner.Err(); err != nil {
 		fmt.Fprintln(os.Stderr, "reading standard input:", err)
 	}
-	return issueCount
+	return issues
 }
 
 func (c Checker) debug(s ...interface{}) {
@@ -128,17 +161,23 @@ func (c Checker) debug(s ...interface{}) {
 	}
 }
 
+type pos struct {
+	line uint64 // line number
+	hunk int    // position relative to first @@ in file
+}
+
 // linesChanges returns a map of file names to line numbers being changed
-func (c Checker) linesChanged() map[string][]uint64 {
+func (c Checker) linesChanged() map[string][]pos {
 	type state struct {
 		file    string
-		lineNo  uint64   // current line number within chunk
-		changes []uint64 // line numbers being changed
+		lineNo  uint64 // current line number within chunk
+		hunk    int    // current line count since first @@ in file
+		changes []pos  // position of changes
 	}
 
 	var (
 		s       state
-		changes = make(map[string][]uint64)
+		changes = make(map[string][]pos)
 	)
 
 	for _, file := range c.NewFiles {
@@ -175,10 +214,14 @@ func (c Checker) linesChanged() map[string][]uint64 {
 				panic(err)
 			}
 			s.lineNo = cstart - 1 // -1 as cstart is the next line number
+		case strings.HasPrefix(line, " "):
+			s.hunk++
 		case strings.HasPrefix(line, "-"):
+			s.hunk++
 			s.lineNo--
 		case strings.HasPrefix(line, "+"):
-			s.changes = append(s.changes, s.lineNo)
+			s.hunk++
+			s.changes = append(s.changes, pos{line: s.lineNo, hunk: s.hunk})
 		}
 
 	}
