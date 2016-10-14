@@ -3,9 +3,11 @@ package revgrep
 import (
 	"bufio"
 	"bytes"
+	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -39,10 +41,40 @@ func teardown(t *testing.T, wd string) {
 	}
 }
 
-func TestChanges(t *testing.T) {
+// TestChangesReturn tests the return parameters of the Changes function.
+func TestChangesReturn(t *testing.T) {
+	tests := map[string]struct {
+		exp []Issue
+	}{
+		"7-commit": {exp: []Issue{{File: "main.go", LineNo: 6, HunkPos: 5, Issue: "main.go:6: missing argument for Sprintf(\"%s\"): format reads arg 1, have only 0 args"}}},
+	}
+
+	for stage, test := range tests {
+		prevwd, sample := setup(t, stage, "")
+
+		reader := bytes.NewBuffer(sample)
+
+		c := Checker{}
+		issues, err := c.Check(reader, ioutil.Discard)
+		if err != nil {
+			t.Errorf("%v: unexpected error: %v", stage, err)
+		}
+
+		if !reflect.DeepEqual(issues, test.exp) {
+			t.Errorf("%v: got: %#v, exp: %v", stage, issues, test.exp)
+		}
+
+		teardown(t, prevwd)
+	}
+
+}
+
+// TestChangesReturn tests the writer in the argument to the Changes function
+// and generally tests the entire programs functionality.
+func TestChangesWriter(t *testing.T) {
 	tests := map[string]struct {
 		subdir  string
-		exp     []string // file:linenumber including trailing space
+		exp     []string // file:linenumber including trailing colon
 		revFrom string
 		revTo   string
 	}{
@@ -74,7 +106,10 @@ func TestChanges(t *testing.T) {
 			RevisionFrom: test.revFrom,
 			RevisionTo:   test.revTo,
 		}
-		_ = c.Check(reader, &out)
+		_, err := c.Check(reader, &out)
+		if err != nil {
+			t.Errorf("%v: unexpected error: %v", stage, err)
+		}
 
 		scanner := bufio.NewScanner(&out)
 		var i int

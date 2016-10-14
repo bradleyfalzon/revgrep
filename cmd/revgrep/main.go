@@ -30,8 +30,12 @@ func main() {
 		checker.Debug = os.Stdout
 	}
 
-	issueCount := checker.Check(os.Stdin, os.Stderr)
-	if issueCount > 0 {
+	issues, err := checker.Check(os.Stdin, os.Stderr)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	if len(issues) > 0 {
 		os.Exit(1)
 	}
 }

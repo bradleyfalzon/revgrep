@@ -3,6 +3,7 @@ package revgrep
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -13,6 +14,8 @@ import (
 	"strings"
 )
 
+// Checker provides APIs to filter static analysis tools to specific commits,
+// such as showing only issues since last commit.
 type Checker struct {
 	// Patch file (unified) to read to detect lines being changed, if nil revgrep
 	// will attempt to detect the VCS and generate an appropriate patch. Auto
@@ -21,16 +24,30 @@ type Checker struct {
 	// must be relative to current working directory.
 	Patch io.Reader
 	// NewFiles is a list of file names (with absolute paths) where the entire
-	// contents of the file is new
+	// contents of the file is new.
 	NewFiles []string
-	// Debug sets the debug writer for additional output
+	// Debug sets the debug writer for additional output.
 	Debug io.Writer
 	// RevisionFrom check revision starting at, leave blank for auto detection
-	// ignored if patch is set
+	// ignored if patch is set.
 	RevisionFrom string
 	// RevisionTo checks revision finishing at, leave blank for auto detection
-	// ignored if patch is set
+	// ignored if patch is set.
 	RevisionTo string
+}
+
+// Issue contains metadata about an issue found.
+type Issue struct {
+	// File is the name of the file as it appeared from the patch.
+	File string
+	// LineNo is the line number of the file.
+	LineNo int
+	// HunkPos is position from file's first @@, or zero if this is a new file.
+	//
+	// See also: https://developer.github.com/v3/pulls/comments/#create-a-comment
+	HunkPos int
+	// Issue text as it appeared from the tool.
+	Issue string
 }
 
 var (
@@ -39,23 +56,30 @@ var (
 )
 
 // Check scans reader and writes any lines to writer that have been added in
-// Checker.Patch. Returns number of issues written to writer. If no VCS could
-// be found or other VCS errors occur, all issues are written to writer.
+// Checker.Patch.
+//
+// Returns issues written to writer when no error occurs.
+//
+// If no VCS could be found or other VCS errors occur, all issues are written
+// to writer and an error is returned.
+//
 // File paths in reader must be relative to current working directory or
 // absolute.
-func (c Checker) Check(reader io.Reader, writer io.Writer) int {
+func (c Checker) Check(reader io.Reader, writer io.Writer) (issues []Issue, err error) {
 	// Check if patch is supplied, if not, retrieve from VCS
-	var writeAll bool
+	var (
+		writeAll  bool
+		returnErr error
+	)
 	if c.Patch == nil {
-		var err error
 		c.Patch, c.NewFiles, err = GitPatch(c.RevisionFrom, c.RevisionTo)
 		if err != nil {
 			writeAll = true
-			c.debug("could not read git repo:", err)
+			returnErr = fmt.Errorf("could not read git repo: %s", err)
 		}
 		if c.Patch == nil {
 			writeAll = true
-			c.debug("no version control repository found")
+			returnErr = errors.New("no version control repository found")
 		}
 	}
 
@@ -66,11 +90,10 @@ func (c Checker) Check(reader io.Reader, writer io.Writer) int {
 
 	cwd, err := os.Getwd()
 	if err != nil {
-		c.debug(fmt.Sprintf("could not get current working directory: %s", err))
+		returnErr = fmt.Errorf("could not get current working directory: %s", err)
 	}
 
 	// Scan each line in reader and only write those lines if lines changed
-	var issueCount int
 	scanner := bufio.NewScanner(reader)
 	for scanner.Scan() {
 		line := lineRE.FindSubmatch(scanner.Bytes())
@@ -98,16 +121,31 @@ func (c Checker) Check(reader io.Reader, writer io.Writer) int {
 			path = rel
 		}
 
-		var changed bool
+		var (
+			fpos    pos
+			changed bool
+		)
 		if fchanges, ok := linesChanged[path]; ok {
 			// found file, see if lines matched
-			for _, fno := range fchanges {
-				if fno == lno {
+			for _, pos := range fchanges {
+				if pos.lineNo == int(lno) {
+					fpos = pos
 					changed = true
 				}
 			}
-			if changed == true || fchanges == nil {
-				issueCount++
+			if changed || fchanges == nil {
+				// either file changed or it's a new file
+				issue := Issue{
+					File:    path,
+					LineNo:  fpos.lineNo,
+					HunkPos: fpos.lineNo,
+					Issue:   scanner.Text(),
+				}
+				if changed {
+					// file changed
+					issue.HunkPos = fpos.hunkPos
+				}
+				issues = append(issues, issue)
 				fmt.Fprintln(writer, scanner.Text())
 			}
 		}
@@ -116,9 +154,9 @@ func (c Checker) Check(reader io.Reader, writer io.Writer) int {
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		fmt.Fprintln(os.Stderr, "reading standard input:", err)
+		returnErr = fmt.Errorf("error reading standard input: %s", err)
 	}
-	return issueCount
+	return issues, returnErr
 }
 
 func (c Checker) debug(s ...interface{}) {
@@ -128,17 +166,23 @@ func (c Checker) debug(s ...interface{}) {
 	}
 }
 
+type pos struct {
+	lineNo  int // line number
+	hunkPos int // position relative to first @@ in file
+}
+
 // linesChanges returns a map of file names to line numbers being changed
-func (c Checker) linesChanged() map[string][]uint64 {
+func (c Checker) linesChanged() map[string][]pos {
 	type state struct {
 		file    string
-		lineNo  uint64   // current line number within chunk
-		changes []uint64 // line numbers being changed
+		lineNo  int   // current line number within chunk
+		hunkPos int   // current line count since first @@ in file
+		changes []pos // position of changes
 	}
 
 	var (
 		s       state
-		changes = make(map[string][]uint64)
+		changes = make(map[string][]pos)
 	)
 
 	for _, file := range c.NewFiles {
@@ -174,11 +218,15 @@ func (c Checker) linesChanged() map[string][]uint64 {
 			if err != nil {
 				panic(err)
 			}
-			s.lineNo = cstart - 1 // -1 as cstart is the next line number
+			s.lineNo = int(cstart) - 1 // -1 as cstart is the next line number
+		case strings.HasPrefix(line, " "):
+			s.hunkPos++
 		case strings.HasPrefix(line, "-"):
+			s.hunkPos++
 			s.lineNo--
 		case strings.HasPrefix(line, "+"):
-			s.changes = append(s.changes, s.lineNo)
+			s.hunkPos++
+			s.changes = append(s.changes, pos{lineNo: s.lineNo, hunkPos: s.hunkPos})
 		}
 
 	}
