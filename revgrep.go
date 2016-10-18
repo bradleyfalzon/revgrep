@@ -42,7 +42,8 @@ type Issue struct {
 	File string
 	// LineNo is the line number of the file.
 	LineNo int
-	// HunkPos is position from file's first @@, or zero if this is a new file.
+	// HunkPos is position from file's first @@, for new files this will be the
+	// line number.
 	//
 	// See also: https://developer.github.com/v3/pulls/comments/#create-a-comment
 	HunkPos int
