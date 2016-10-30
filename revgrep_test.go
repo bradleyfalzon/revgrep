@@ -41,32 +41,38 @@ func teardown(t *testing.T, wd string) {
 	}
 }
 
-// TestChangesReturn tests the return parameters of the Changes function.
-func TestChangesReturn(t *testing.T) {
-	tests := map[string]struct {
-		exp []Issue
+// TestCheckerRegexp tests line matching and extraction of issue
+func TestCheckerRegexp(t *testing.T) {
+	tests := []struct {
+		line string
+		want Issue
 	}{
-		"7-commit": {exp: []Issue{{File: "main.go", LineNo: 6, HunkPos: 5, Issue: "main.go:6: missing argument for Sprintf(\"%s\"): format reads arg 1, have only 0 args"}}},
+		{"file.go:1:issue", Issue{"file.go", 1, 0, 2, "file.go:1:issue", "issue"}},
+		{"file.go:1:5:issue", Issue{"file.go", 1, 5, 2, "file.go:1:5:issue", "issue"}},
+		{"file.go:1:  issue", Issue{"file.go", 1, 0, 2, "file.go:1:  issue", "issue"}},
 	}
 
-	for stage, test := range tests {
-		prevwd, sample := setup(t, stage, "")
+	diff := []byte(`--- a/file.go
++++ b/file.go
+@@ -1,1 +1,1 @@
+-func Line() {}
++func NewLine() {}`)
 
-		reader := bytes.NewBuffer(sample)
+	for _, test := range tests {
+		checker := Checker{
+			Patch: bytes.NewReader(diff),
+		}
 
-		c := Checker{}
-		issues, err := c.Check(reader, ioutil.Discard)
+		issues, err := checker.Check(bytes.NewReader([]byte(test.line)), ioutil.Discard)
 		if err != nil {
-			t.Errorf("%v: unexpected error: %v", stage, err)
+			t.Errorf("unexpected error: %v", err)
 		}
 
-		if !reflect.DeepEqual(issues, test.exp) {
-			t.Errorf("%v: got: %#v, exp: %v", stage, issues, test.exp)
+		want := []Issue{test.want}
+		if !reflect.DeepEqual(issues, want) {
+			t.Errorf("unexpected issues for line: %q\nhave: %#v\nwant: %#v", test.line, issues, want)
 		}
-
-		teardown(t, prevwd)
 	}
-
 }
 
 // TestChangesReturn tests the writer in the argument to the Changes function

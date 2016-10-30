@@ -42,6 +42,8 @@ type Issue struct {
 	File string
 	// LineNo is the line number of the file.
 	LineNo int
+	// ColNo is the column number or 0 if none could be parsed.
+	ColNo int
 	// HunkPos is position from file's first @@, for new files this will be the
 	// line number.
 	//
@@ -49,11 +51,14 @@ type Issue struct {
 	HunkPos int
 	// Issue text as it appeared from the tool.
 	Issue string
+	// Message is the issue without file name, line number and column number.
+	Message string
 }
 
 var (
-	// file:lineNumber
-	lineRE = regexp.MustCompile("^(.*):([0-9]+)")
+	// file.go:lineNo:colNo:message
+	// colNo is optional, strip spaces before message
+	lineRE = regexp.MustCompile(`(.*?\.go):([0-9]+):([0-9]+)?:?\s*(.*)`)
 )
 
 // Check scans reader and writes any lines to writer that have been added in
@@ -108,6 +113,13 @@ func (c Checker) Check(reader io.Reader, writer io.Writer) (issues []Issue, err 
 			continue
 		}
 
+		// Make absolute path names relative
+		path := string(line[1])
+		if rel, err := filepath.Rel(cwd, path); err == nil {
+			c.debug("rewrote path from %q to %q", path, rel)
+			path = rel
+		}
+
 		// Parse line number
 		lno, err := strconv.ParseUint(string(line[2]), 10, 64)
 		if err != nil {
@@ -115,12 +127,18 @@ func (c Checker) Check(reader io.Reader, writer io.Writer) (issues []Issue, err 
 			continue
 		}
 
-		// Make absolute path names relative
-		path := string(line[1])
-		if rel, err := filepath.Rel(cwd, path); err == nil {
-			c.debug("rewrote path from %q to %q", path, rel)
-			path = rel
+		// Parse optional column number
+		var cno uint64
+		if len(line[3]) > 0 {
+			cno, err = strconv.ParseUint(string(line[3]), 10, 64)
+			if err != nil {
+				c.debug("cannot parse column number:", scanner.Text())
+				// Ignore this error and continue
+			}
 		}
+
+		// Extract message
+		msg := string(line[4])
 
 		var (
 			fpos    pos
@@ -139,11 +157,13 @@ func (c Checker) Check(reader io.Reader, writer io.Writer) (issues []Issue, err 
 				issue := Issue{
 					File:    path,
 					LineNo:  fpos.lineNo,
+					ColNo:   int(cno),
 					HunkPos: fpos.lineNo,
 					Issue:   scanner.Text(),
+					Message: msg,
 				}
 				if changed {
-					// file changed
+					// existing file changed
 					issue.HunkPos = fpos.hunkPos
 				}
 				issues = append(issues, issue)
