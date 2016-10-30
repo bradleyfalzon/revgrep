@@ -44,12 +44,14 @@ func teardown(t *testing.T, wd string) {
 // TestCheckerRegexp tests line matching and extraction of issue
 func TestCheckerRegexp(t *testing.T) {
 	tests := []struct {
-		line string
-		want Issue
+		regexp string
+		line   string
+		want   Issue
 	}{
-		{"file.go:1:issue", Issue{"file.go", 1, 0, 2, "file.go:1:issue", "issue"}},
-		{"file.go:1:5:issue", Issue{"file.go", 1, 5, 2, "file.go:1:5:issue", "issue"}},
-		{"file.go:1:  issue", Issue{"file.go", 1, 0, 2, "file.go:1:  issue", "issue"}},
+		{"", "file.go:1:issue", Issue{"file.go", 1, 0, 2, "file.go:1:issue", "issue"}},
+		{"", "file.go:1:5:issue", Issue{"file.go", 1, 5, 2, "file.go:1:5:issue", "issue"}},
+		{"", "file.go:1:  issue", Issue{"file.go", 1, 0, 2, "file.go:1:  issue", "issue"}},
+		{`.*?:(.*?\.go):([0-9]+):()(.*)`, "prefix:file.go:1:issue", Issue{"file.go", 1, 0, 2, "prefix:file.go:1:issue", "issue"}},
 	}
 
 	diff := []byte(`--- a/file.go
@@ -60,7 +62,8 @@ func TestCheckerRegexp(t *testing.T) {
 
 	for _, test := range tests {
 		checker := Checker{
-			Patch: bytes.NewReader(diff),
+			Patch:  bytes.NewReader(diff),
+			Regexp: test.regexp,
 		}
 
 		issues, err := checker.Check(bytes.NewReader([]byte(test.line)), ioutil.Discard)

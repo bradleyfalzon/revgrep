@@ -19,11 +19,13 @@ func main() {
 	}
 
 	debug := flag.Bool("d", false, "Show debug output")
+	regexp := flag.String("regexp", "", "Regexp to match path, line number, optional column number, and message")
 	flag.Parse()
 
 	checker := revgrep.Checker{
 		RevisionFrom: flag.Arg(0),
 		RevisionTo:   flag.Arg(1),
+		Regexp:       *regexp,
 	}
 
 	if *debug {

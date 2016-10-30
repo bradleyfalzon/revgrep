@@ -34,6 +34,8 @@ type Checker struct {
 	// RevisionTo checks revision finishing at, leave blank for auto detection
 	// ignored if patch is set.
 	RevisionTo string
+	// Regexp to match path, line number, optional column number, and message.
+	Regexp string
 }
 
 // Issue contains metadata about an issue found.
@@ -54,12 +56,6 @@ type Issue struct {
 	// Message is the issue without file name, line number and column number.
 	Message string
 }
-
-var (
-	// file.go:lineNo:colNo:message
-	// colNo is optional, strip spaces before message
-	lineRE = regexp.MustCompile(`(.*?\.go):([0-9]+):([0-9]+)?:?\s*(.*)`)
-)
 
 // Check scans reader and writes any lines to writer that have been added in
 // Checker.Patch.
@@ -86,6 +82,16 @@ func (c Checker) Check(reader io.Reader, writer io.Writer) (issues []Issue, err 
 		if c.Patch == nil {
 			writeAll = true
 			returnErr = errors.New("no version control repository found")
+		}
+	}
+
+	// file.go:lineNo:colNo:message
+	// colNo is optional, strip spaces before message
+	lineRE := regexp.MustCompile(`(.*?\.go):([0-9]+):([0-9]+)?:?\s*(.*)`)
+	if c.Regexp != "" {
+		lineRE, err = regexp.Compile(c.Regexp)
+		if err != nil {
+			return nil, fmt.Errorf("could not parse regexp: %v", err)
 		}
 	}
 
