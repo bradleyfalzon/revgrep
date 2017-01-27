@@ -36,6 +36,10 @@ type Checker struct {
 	RevisionTo string
 	// Regexp to match path, line number, optional column number, and message.
 	Regexp string
+	// AbsPath is used to make an absolute path of an issue's filename to be
+	// relative in order to match patch file. If not set, current working
+	// directory is used.
+	AbsPath string
 }
 
 // Issue contains metadata about an issue found.
@@ -100,9 +104,12 @@ func (c Checker) Check(reader io.Reader, writer io.Writer) (issues []Issue, err 
 	linesChanged := c.linesChanged()
 	c.debug(fmt.Sprintf("lines changed: %+v", linesChanged))
 
-	cwd, err := os.Getwd()
-	if err != nil {
-		returnErr = fmt.Errorf("could not get current working directory: %s", err)
+	absPath := c.AbsPath
+	if absPath == "" {
+		absPath, err = os.Getwd()
+		if err != nil {
+			returnErr = fmt.Errorf("could not get current working directory: %s", err)
+		}
 	}
 
 	// Scan each line in reader and only write those lines if lines changed
@@ -121,7 +128,7 @@ func (c Checker) Check(reader io.Reader, writer io.Writer) (issues []Issue, err 
 
 		// Make absolute path names relative
 		path := string(line[1])
-		if rel, err := filepath.Rel(cwd, path); err == nil {
+		if rel, err := filepath.Rel(absPath, path); err == nil {
 			c.debug("rewrote path from %q to %q", path, rel)
 			path = rel
 		}
