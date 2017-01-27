@@ -102,7 +102,7 @@ func (c Checker) Check(reader io.Reader, writer io.Writer) (issues []Issue, err 
 	// TODO consider lazy loading this, if there's nothing in stdin, no point
 	// checking for recent changes
 	linesChanged := c.linesChanged()
-	c.debug(fmt.Sprintf("lines changed: %+v", linesChanged))
+	c.debugf("lines changed: %+v", linesChanged)
 
 	absPath := c.AbsPath
 	if absPath == "" {
@@ -117,7 +117,7 @@ func (c Checker) Check(reader io.Reader, writer io.Writer) (issues []Issue, err 
 	for scanner.Scan() {
 		line := lineRE.FindSubmatch(scanner.Bytes())
 		if line == nil {
-			c.debug("cannot parse file+line number:", scanner.Text())
+			c.debugf("cannot parse file+line number:", scanner.Text())
 			continue
 		}
 
@@ -129,14 +129,14 @@ func (c Checker) Check(reader io.Reader, writer io.Writer) (issues []Issue, err 
 		// Make absolute path names relative
 		path := string(line[1])
 		if rel, err := filepath.Rel(absPath, path); err == nil {
-			c.debug("rewrote path from %q to %q", path, rel)
+			c.debugf("rewrote path from %q to %q (absPath: %q)", path, rel, absPath)
 			path = rel
 		}
 
 		// Parse line number
 		lno, err := strconv.ParseUint(string(line[2]), 10, 64)
 		if err != nil {
-			c.debug("cannot parse line number:", scanner.Text())
+			c.debugf("cannot parse line number: %q", scanner.Text())
 			continue
 		}
 
@@ -145,13 +145,15 @@ func (c Checker) Check(reader io.Reader, writer io.Writer) (issues []Issue, err 
 		if len(line[3]) > 0 {
 			cno, err = strconv.ParseUint(string(line[3]), 10, 64)
 			if err != nil {
-				c.debug("cannot parse column number:", scanner.Text())
+				c.debugf("cannot parse column number: %q", scanner.Text())
 				// Ignore this error and continue
 			}
 		}
 
 		// Extract message
 		msg := string(line[4])
+
+		c.debugf("path: %q, lineNo: %v, colNo: %v, msg: %q", path, lno, cno, msg)
 
 		var (
 			fpos    pos
@@ -184,7 +186,7 @@ func (c Checker) Check(reader io.Reader, writer io.Writer) (issues []Issue, err 
 			}
 		}
 		if !changed {
-			c.debug("unchanged:", scanner.Text())
+			c.debugf("unchanged:", scanner.Text())
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -193,10 +195,10 @@ func (c Checker) Check(reader io.Reader, writer io.Writer) (issues []Issue, err 
 	return issues, returnErr
 }
 
-func (c Checker) debug(s ...interface{}) {
+func (c Checker) debugf(format string, s ...interface{}) {
 	if c.Debug != nil {
 		fmt.Fprint(c.Debug, "DEBUG: ")
-		fmt.Fprintln(c.Debug, s...)
+		fmt.Fprintf(c.Debug, format+"\n", s...)
 	}
 }
 
@@ -230,7 +232,7 @@ func (c Checker) linesChanged() map[string][]pos {
 	scanner := bufio.NewScanner(c.Patch)
 	for scanner.Scan() {
 		line := scanner.Text() // TODO scanner.Bytes()
-		c.debug(line)
+		c.debugf(line)
 		s.lineNo++
 		switch {
 		case strings.HasPrefix(line, "+++ ") && len(line) > 4:
