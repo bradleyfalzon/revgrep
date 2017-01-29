@@ -186,7 +186,7 @@ func (c Checker) Check(reader io.Reader, writer io.Writer) (issues []Issue, err 
 			}
 		}
 		if !changed {
-			c.debugf("unchanged:", scanner.Text())
+			c.debugf("unchanged: %s", scanner.Text())
 		}
 	}
 	if err := scanner.Err(); err != nil {
