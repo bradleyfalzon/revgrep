@@ -117,7 +117,7 @@ func (c Checker) Check(reader io.Reader, writer io.Writer) (issues []Issue, err 
 	for scanner.Scan() {
 		line := lineRE.FindSubmatch(scanner.Bytes())
 		if line == nil {
-			c.debugf("cannot parse file+line number:", scanner.Text())
+			c.debugf("cannot parse file+line number: %s", scanner.Text())
 			continue
 		}
 
