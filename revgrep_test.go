@@ -167,3 +167,39 @@ func TestGitPatchNonGitDir(t *testing.T) {
 		t.Errorf("newFiles expected nil, got: %v", newfiles)
 	}
 }
+
+func TestLinesChanged(t *testing.T) {
+	diff := []byte(`--- a/file.go
++++ b/file.go
+@@ -1,1 +1,1 @@
+ // comment
+-func Line() {}
++func NewLine() {}
+@@ -20,1 +20,1 @@
+ // comment
+-func Line() {}
++func NewLine() {}
+ // comment
+@@ -3,1 +30,1 @@
+-func Line() {}
++func NewLine() {}
+ // comment`)
+
+	checker := Checker{
+		Patch: bytes.NewReader(diff),
+	}
+
+	have := checker.linesChanged()
+
+	want := map[string][]pos{
+		"file.go": []pos{
+			{lineNo: 2, hunkPos: 3},
+			{lineNo: 21, hunkPos: 7},
+			{lineNo: 30, hunkPos: 11},
+		},
+	}
+
+	if !reflect.DeepEqual(have, want) {
+		t.Errorf("unexpected pos:\nhave: %#v\nwant: %#v", have, want)
+	}
+}

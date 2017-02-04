@@ -234,6 +234,7 @@ func (c Checker) linesChanged() map[string][]pos {
 		line := scanner.Text() // TODO scanner.Bytes()
 		c.debugf(line)
 		s.lineNo++
+		s.hunkPos++
 		switch {
 		case strings.HasPrefix(line, "+++ ") && len(line) > 4:
 			if s.changes != nil {
@@ -241,7 +242,7 @@ func (c Checker) linesChanged() map[string][]pos {
 				changes[s.file] = s.changes
 			}
 			// 6 removes "+++ b/"
-			s = state{file: line[6:]}
+			s = state{file: line[6:], hunkPos: -1}
 		case strings.HasPrefix(line, "@@ "):
 			//      @@ -1 +2,4 @@
 			// chdr ^^^^^^^^^^^^^
@@ -255,13 +256,9 @@ func (c Checker) linesChanged() map[string][]pos {
 				panic(err)
 			}
 			s.lineNo = int(cstart) - 1 // -1 as cstart is the next line number
-		case strings.HasPrefix(line, " "):
-			s.hunkPos++
 		case strings.HasPrefix(line, "-"):
-			s.hunkPos++
 			s.lineNo--
 		case strings.HasPrefix(line, "+"):
-			s.hunkPos++
 			s.changes = append(s.changes, pos{lineNo: s.lineNo, hunkPos: s.hunkPos})
 		}
 
