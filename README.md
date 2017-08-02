@@ -30,7 +30,20 @@ main.go:5: missing argument for Sprintf("%s"): format reads arg 1, have only 0 a
 `revgrep` CLI tool will return an exit status of 1 if any issues match, else it will return 0. Consider using
 `${PIPESTATUS[0]}` for the exit status of the `go vet` command in the above example.
 
-See `-help` for additional options regarding specifying revisions.
+```
+Usage: revgrep [options] [from-rev] [to-rev]
+
+from-rev filters issues to lines changed since (and including) this revision
+  to-rev filters issues to lines changed since (and including) this revision, requires <from-rev>
+
+  If no revisions are given, and there are unstaged changes or untracked files, only those changes are shown
+  If no revisions are given, and there are no unstaged changes or untracked files, only changes in HEAD~ are shown
+  If from-rev is given and to-rev is not, only changes between from-rev and HEAD are shown.
+
+    -d    Show debug output
+      -regexp string
+              Regexp to match path, line number, optional column number, and message
+```
 
 # Other Examples
 

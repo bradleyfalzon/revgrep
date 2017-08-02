@@ -15,6 +15,10 @@ func main() {
 		fmt.Println("from-rev filters issues to lines changed since (and including) this revision")
 		fmt.Println("  to-rev filters issues to lines changed since (and including) this revision, requires <from-rev>")
 		fmt.Println()
+		fmt.Println("If no revisions are given, and there are unstaged changes or untracked files, only those changes are shown")
+		fmt.Println("If no revisions are given, and there are no unstaged changes or untracked files, only changes in HEAD~ are shown")
+		fmt.Println("If from-rev is given and to-rev is not, only changes between from-rev and HEAD are shown.")
+		fmt.Println()
 		flag.PrintDefaults()
 	}
 
