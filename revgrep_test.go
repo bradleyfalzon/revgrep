@@ -203,3 +203,28 @@ func TestLinesChanged(t *testing.T) {
 		t.Errorf("unexpected pos:\nhave: %#v\nwant: %#v", have, want)
 	}
 }
+
+func TestLinesChangedForNewFile(t *testing.T) {
+	diff := []byte(`--- /dev/null
++++ b/file.go
+@@ -0,0 +1,2 @@
++func Line1() {}
++func Line2() {}`)
+
+	checker := Checker{
+		Patch: bytes.NewReader(diff),
+	}
+
+	have := checker.linesChanged()
+
+	want := map[string][]pos{
+		"file.go": []pos{
+			{lineNo: 1, hunkPos: 1},
+			{lineNo: 2, hunkPos: 2},
+		},
+	}
+
+	if !reflect.DeepEqual(have, want) {
+		t.Errorf("unexpected pos:\nhave: %#v\nwant: %#v", have, want)
+	}
+}

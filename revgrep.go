@@ -167,8 +167,7 @@ func (c Checker) Check(reader io.Reader, writer io.Writer) (issues []Issue, err 
 					changed = true
 				}
 			}
-			if changed || fchanges == nil {
-				// either file changed or it's a new file
+			if changed {
 				issue := Issue{
 					File:    path,
 					LineNo:  fpos.lineNo,
