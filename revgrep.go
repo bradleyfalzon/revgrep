@@ -207,7 +207,9 @@ type pos struct {
 	hunkPos int // position relative to first @@ in file
 }
 
-// linesChanges returns a map of file names to line numbers being changed
+// linesChanges returns a map of file names to line numbers being changed.
+// If key is nil, the file has been recently added, else it contains a slice
+// of positions that have been added.
 func (c Checker) linesChanged() map[string][]pos {
 	type state struct {
 		file    string
@@ -242,7 +244,7 @@ func (c Checker) linesChanged() map[string][]pos {
 				changes[s.file] = s.changes
 			}
 			// 6 removes "+++ b/"
-			s = state{file: line[6:], hunkPos: -1}
+			s = state{file: line[6:], hunkPos: -1, changes: []pos{}}
 		case strings.HasPrefix(line, "@@ "):
 			//      @@ -1 +2,4 @@
 			// chdr ^^^^^^^^^^^^^
