@@ -103,6 +103,8 @@ func TestChangesWriter(t *testing.T) {
 		"10-committed": {"", []string{"main.go:6:"}, "HEAD~1", "HEAD~0"},
 		// static analysis tools with absolute paths should be handled
 		"11-abs-path": {"", []string{"main.go:6:"}, "HEAD~1", "HEAD~0"},
+		// Removing a single line shouldn't raise any issues.
+		"12-removed-lines": {"", nil, "", ""},
 	}
 
 	for stage, test := range tests {

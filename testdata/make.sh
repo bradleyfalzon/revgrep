@@ -102,3 +102,28 @@ if [[ "$1" == "11-abs-path" ]]; then
     go vet |& sed -r "s:(.*\.go):$(pwd)/\1:g"
     exit
 fi
+
+# Remove one line on a file with existing issues
+
+if [[ "$1" == "12-removed-lines" ]]; then
+
+    cat > 12-removed-lines.go <<EOF
+package main
+import "fmt"
+var _ = fmt.Sprintf("12-removed-lines %s")
+// some comment that will be removed
+EOF
+
+    git add .
+    git commit -m "Commit" > /dev/null
+
+    cat > 12-removed-lines.go <<EOF
+package main
+import "fmt"
+var _ = fmt.Sprintf("12-removed-lines %s")
+EOF
+
+    git add .
+    git commit -m "Commit" > /dev/null
+    close
+fi
