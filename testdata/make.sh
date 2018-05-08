@@ -7,7 +7,7 @@ if [[ "$(basename $(pwd))" != "testdata" ]]; then
 fi
 
 function close() {
-    go vet ./...
+    go tool vet .
     exit 0
 }
 
@@ -87,6 +87,7 @@ EOF
 
 cat > main2.go <<EOF
 package main
+import "fmt"
 var _ = fmt.Sprintf("9-untracked %s")
 EOF
 
@@ -99,7 +100,7 @@ EOF
 # Display absolute path
 
 if [[ "$1" == "11-abs-path" ]]; then
-    go vet |& sed -r "s:(.*\.go):$(pwd)/\1:g"
+    go tool vet . 2>&1 | sed -E "s:(.*\.go):$(pwd)/\1:g"
     exit
 fi
 

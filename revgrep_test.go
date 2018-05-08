@@ -98,7 +98,7 @@ func TestChangesWriter(t *testing.T) {
 		// From a commit+unstaged, all changes should be shown
 		"8-unstaged": {"", []string{"main.go:6:", "main.go:7:"}, "HEAD~1", ""},
 		// From a commit+unstaged+untracked, all changes should be shown
-		"9-untracked": {"", []string{"main.go:6:", "main.go:7:", "main2.go:2:"}, "HEAD~1", ""},
+		"9-untracked": {"", []string{"main.go:6:", "main.go:7:", "main2.go:3:"}, "HEAD~1", ""},
 		// From a commit to last commit, all changes should be shown except recent unstaged, untracked
 		"10-committed": {"", []string{"main.go:6:"}, "HEAD~1", "HEAD~0"},
 		// static analysis tools with absolute paths should be handled
@@ -108,38 +108,39 @@ func TestChangesWriter(t *testing.T) {
 	}
 
 	for stage, test := range tests {
-		prevwd, sample := setup(t, stage, test.subdir)
+		t.Run(stage, func(t *testing.T) {
+			prevwd, sample := setup(t, stage, test.subdir)
+			reader := bytes.NewBuffer(sample)
+			var out bytes.Buffer
 
-		reader := bytes.NewBuffer(sample)
-		var out bytes.Buffer
+			c := Checker{
+				RevisionFrom: test.revFrom,
+				RevisionTo:   test.revTo,
+			}
+			_, err := c.Check(reader, &out)
+			if err != nil {
+				t.Errorf("%v: unexpected error: %v", stage, err)
+			}
+			scanner := bufio.NewScanner(&out)
+			var i int
+			for i = 0; scanner.Scan(); i++ {
+				// Rewrite abs paths to for simpler matching
+				line := rewriteAbs(scanner.Text())
+				line = strings.TrimPrefix(line, "./")
 
-		c := Checker{
-			RevisionFrom: test.revFrom,
-			RevisionTo:   test.revTo,
-		}
-		_, err := c.Check(reader, &out)
-		if err != nil {
-			t.Errorf("%v: unexpected error: %v", stage, err)
-		}
-
-		scanner := bufio.NewScanner(&out)
-		var i int
-		for i = 0; scanner.Scan(); i++ {
-			// Rewrite abs paths to for simpler matching
-			line := rewriteAbs(scanner.Text())
-
-			if i > len(test.exp)-1 {
-				t.Errorf("%v: unexpected line: %q", stage, line)
-			} else {
-				if !strings.HasPrefix(line, test.exp[i]) {
-					t.Errorf("%v: line does not have prefix: %q line: %q", stage, test.exp[i], line)
+				if i > len(test.exp)-1 {
+					t.Errorf("%v: unexpected line: %q", stage, line)
+				} else {
+					if !strings.HasPrefix(line, test.exp[i]) {
+						t.Errorf("%v: line does not have prefix: %q line: %q", stage, test.exp[i], line)
+					}
 				}
 			}
-		}
-		if i != len(test.exp) {
-			t.Errorf("%v: i %v, expected %v", stage, i, len(test.exp))
-		}
-		teardown(t, prevwd)
+			if i != len(test.exp) {
+				t.Errorf("%v: i %v, expected %v", stage, i, len(test.exp))
+			}
+			teardown(t, prevwd)
+		})
 	}
 }
 
