@@ -281,24 +281,12 @@ func (c Checker) linesChanged() map[string][]pos {
 
 	scanner := bufio.NewReader(c.Patch)
 	var scanErr error
-Loop:
 	for {
 		lineB, isPrefix, err := scanner.ReadLine()
 		if isPrefix {
-			// If a single line overflowed the buffer, keep building it up. This
-			// leaves the possibility of a DOS attack by a user creating a git commit
-			// with a line so large it OOMs the process calling golangci-lint.
-			for {
-				lineB2, isPrefix2, err2 := scanner.ReadLine()
-				if err2 != nil {
-					scanErr = err2
-					break Loop
-				}
-				lineB = append(lineB, lineB2...)
-				if isPrefix2 {
-					continue
-				}
-			}
+			// If a single line overflowed the buffer, don't bother processing it as
+			// it's likey part of a file and not relevant to the patch.
+			continue
 		}
 		if err != nil {
 			scanErr = err
