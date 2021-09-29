@@ -78,6 +78,46 @@ func TestCheckerRegexp(t *testing.T) {
 	}
 }
 
+// TestWholeFile tests Checker.WholeFiles will report any issues in files that have changes, even if
+// they are outside the diff.
+func TestWholeFiles(t *testing.T) {
+	tests := []struct {
+		name    string
+		line    string
+		matches bool
+	}{
+		{"inside diff", "file.go:1:issue", true},
+		{"outside diff", "file.go:10:5:issue", true},
+		{"different file", "file2.go:1:issue", false},
+	}
+
+	diff := []byte(`--- a/file.go
++++ b/file.go
+@@ -1,1 +1,1 @@
+-func Line() {}
++func NewLine() {}`)
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			checker := Checker{
+				Patch:      bytes.NewReader(diff),
+				WholeFiles: true,
+			}
+
+			issues, err := checker.Check(bytes.NewReader([]byte(test.line)), ioutil.Discard)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if test.matches && len(issues) != 1 {
+				t.Fatalf("expected one issue to be returned, but got %#v", issues)
+			}
+			if !test.matches && len(issues) != 0 {
+				t.Fatalf("expected no issues to be returned, but got %#v", issues)
+			}
+		})
+	}
+}
+
 // TestChangesReturn tests the writer in the argument to the Changes function
 // and generally tests the entire programs functionality.
 func TestChangesWriter(t *testing.T) {
