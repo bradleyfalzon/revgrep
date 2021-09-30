@@ -116,6 +116,10 @@ func (c Checker) IsNewIssue(i InputIssue) (hunkPos int, isNew bool) {
 		return 0, false
 	}
 
+	if c.WholeFiles {
+		return i.Line(), true
+	}
+
 	var (
 		fpos    pos
 		changed bool
@@ -137,10 +141,6 @@ func (c Checker) IsNewIssue(i InputIssue) (hunkPos int, isNew bool) {
 		}
 
 		return hunkPos, true
-	}
-
-	if c.WholeFiles {
-		return i.Line(), true
 	}
 
 	return 0, false
