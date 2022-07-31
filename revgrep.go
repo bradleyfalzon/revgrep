@@ -100,7 +100,7 @@ func (c *Checker) Prepare() error {
 
 // IsNewIssue checks whether issue found by linter is new: it was found in changed lines.
 func (c *Checker) IsNewIssue(i InputIssue) (hunkPos int, isNew bool) {
-	fchanges, ok := c.changes[i.FilePath()]
+	fchanges, ok := c.changes[filepath.ToSlash(i.FilePath())]
 	if !ok { // file wasn't changed
 		return 0, false
 	}
@@ -151,7 +151,7 @@ func (c *Checker) Check(reader io.Reader, writer io.Writer) (issues []Issue, err
 
 	// file.go:lineNo:colNo:message
 	// colNo is optional, strip spaces before message
-	lineRE := regexp.MustCompile(`(.*?\.go):([0-9]+):([0-9]+)?:?\s*(.*)`)
+	lineRE := regexp.MustCompile(`(.+\.go):([0-9]+):([0-9]+)?:?\s*(.*)`)
 	if c.Regexp != "" {
 		lineRE, err = regexp.Compile(c.Regexp)
 		if err != nil {

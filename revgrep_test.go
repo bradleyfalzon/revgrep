@@ -8,12 +8,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
 )
 
-func setup(t *testing.T, stage, subdir string) (prevwd string, sample []byte) {
+func setup(t *testing.T, stage, subdir string) (string, []byte) {
 	t.Helper()
 
 	wd, err := os.Getwd()
@@ -21,19 +22,31 @@ func setup(t *testing.T, stage, subdir string) (prevwd string, sample []byte) {
 		t.Fatalf("could not get working dir: %s", err)
 	}
 
-	// Execute make
-	cmd := exec.Command("./make.sh", stage)
-	cmd.Dir = filepath.Join(wd, "testdata")
+	testDataDir := filepath.Join(wd, "testdata")
 
-	sample, err = cmd.CombinedOutput()
+	// Execute make
+	cmd := exec.Command("bash", "./make.sh", stage)
+	cmd.Dir = testDataDir
+
+	gitOutput, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("could not run make.sh: %v, output:\n%s", err, sample)
+		t.Logf("%s: git setup: %s", stage, string(gitOutput))
+		t.Fatalf("could not run make.sh: %v", err)
 	}
 
-	gitDir := filepath.Join(wd, "testdata", "git")
+	gitDir := filepath.Join(testDataDir, "git")
 	t.Cleanup(func() {
 		_ = os.RemoveAll(gitDir)
 	})
+
+	cmd = exec.Command("go", "vet", "./...")
+	cmd.Dir = gitDir
+
+	goVetOutput, err := cmd.CombinedOutput()
+	if cmd.ProcessState.ExitCode() != 2 {
+		t.Logf("%s: go vet: %s", stage, string(goVetOutput))
+		t.Fatalf("could not run go vet: %v", err)
+	}
 
 	// chdir so the vcs exec commands read the correct testdata
 	err = os.Chdir(filepath.Join(gitDir, subdir))
@@ -41,10 +54,17 @@ func setup(t *testing.T, stage, subdir string) (prevwd string, sample []byte) {
 		t.Fatalf("could not chdir: %v", err)
 	}
 
-	// clean go vet output
-	sample = bytes.ReplaceAll(sample, []byte("."+string(filepath.Separator)), []byte(""))
+	if stage == "11-abs-path" {
+		goVetOutput = regexp.MustCompile(`(.+\.go)`).
+			ReplaceAll(goVetOutput, []byte(filepath.Join(gitDir, "$1")))
+	}
 
-	return wd, sample
+	// clean go vet output
+	goVetOutput = bytes.ReplaceAll(goVetOutput, []byte("."+string(filepath.Separator)), []byte(""))
+
+	t.Logf("%s: go vet clean: %s", stage, string(goVetOutput))
+
+	return wd, goVetOutput
 }
 
 func teardown(t *testing.T, wd string) {
@@ -157,9 +177,9 @@ func TestWholeFiles(t *testing.T) {
 	}
 }
 
-// TestChangesReturn tests the writer in the argument to the Changes function
+// Tests the writer in the argument to the Changes function
 // and generally tests the entire program functionality.
-func TestChangesWriter(t *testing.T) {
+func TestChecker_Check_changesWriter(t *testing.T) {
 	tests := map[string]struct {
 		subdir  string
 		exp     []string // file:linenumber including trailing colon
@@ -188,7 +208,7 @@ func TestChangesWriter(t *testing.T) {
 
 	for stage, test := range tests {
 		t.Run(stage, func(t *testing.T) {
-			prevwd, sample := setup(t, stage, test.subdir)
+			prevwd, goVetOutput := setup(t, stage, test.subdir)
 
 			var out bytes.Buffer
 
@@ -196,7 +216,7 @@ func TestChangesWriter(t *testing.T) {
 				RevisionFrom: test.revFrom,
 				RevisionTo:   test.revTo,
 			}
-			_, err := c.Check(bytes.NewBuffer(sample), &out)
+			_, err := c.Check(bytes.NewBuffer(goVetOutput), &out)
 			if err != nil {
 				t.Errorf("%s: unexpected error: %v", stage, err)
 			}
@@ -219,8 +239,8 @@ func TestChangesWriter(t *testing.T) {
 				count++
 				if i > len(test.exp)-1 {
 					t.Errorf("%s: unexpected line: %q", stage, line)
-				} else if !strings.HasPrefix(line, test.exp[i]) {
-					t.Errorf("%s: line does not have prefix: %q line: %q", stage, test.exp[i], line)
+				} else if !strings.HasPrefix(line, filepath.FromSlash(test.exp[i])) {
+					t.Errorf("%s: line %q does not have prefix %q", stage, line, filepath.FromSlash(test.exp[i]))
 				}
 			}
 
@@ -238,7 +258,7 @@ func rewriteAbs(line string) string {
 	if err != nil {
 		panic(err)
 	}
-	return strings.TrimPrefix(line, cwd+"/")
+	return strings.TrimPrefix(line, cwd+string(filepath.Separator))
 }
 
 func TestGitPatchNonGitDir(t *testing.T) {
