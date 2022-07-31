@@ -7,7 +7,7 @@ if [[ "$(basename $(pwd))" != "testdata" ]]; then
 fi
 
 function close() {
-    go tool vet .
+    go vet ./...
     exit 0
 }
 
@@ -20,7 +20,7 @@ mkdir -p git/subdir && cd git
 
 # Untracked files
 
-git init > /dev/null
+git init --initial-branch=main > /dev/null
 git config --local user.name "testdata"
 git config --local user.email "testdata@example.com"
 touch readme
@@ -100,7 +100,7 @@ EOF
 # Display absolute path
 
 if [[ "$1" == "11-abs-path" ]]; then
-    go tool vet . 2>&1 | sed -E "s:(.*\.go):$(pwd)/\1:g"
+    go vet ./... 2>&1 | sed -E "s:(.*\.go):$(pwd)/\1:g"
     exit
 fi
 

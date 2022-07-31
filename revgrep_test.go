@@ -3,16 +3,19 @@ package revgrep
 import (
 	"bufio"
 	"bytes"
-	"io/ioutil"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 )
 
 func setup(t *testing.T, stage, subdir string) (prevwd string, sample []byte) {
+	t.Helper()
+
 	wd, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("could not get working dir: %s", err)
@@ -21,37 +24,62 @@ func setup(t *testing.T, stage, subdir string) (prevwd string, sample []byte) {
 	// Execute make
 	cmd := exec.Command("./make.sh", stage)
 	cmd.Dir = filepath.Join(wd, "testdata")
+
 	sample, err = cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("could not run make.sh: %v, output:\n%s", err, sample)
 	}
 
+	gitDir := filepath.Join(wd, "testdata", "git")
+	t.Cleanup(func() {
+		_ = os.RemoveAll(gitDir)
+	})
+
 	// chdir so the vcs exec commands read the correct testdata
-	err = os.Chdir(filepath.Join(wd, "testdata", "git", subdir))
+	err = os.Chdir(filepath.Join(gitDir, subdir))
 	if err != nil {
 		t.Fatalf("could not chdir: %v", err)
 	}
+
+	// clean go vet output
+	sample = bytes.ReplaceAll(sample, []byte("."+string(filepath.Separator)), []byte(""))
+
 	return wd, sample
 }
 
 func teardown(t *testing.T, wd string) {
+	t.Helper()
+
 	err := os.Chdir(wd)
 	if err != nil {
 		t.Fatalf("could not chdir: %v", err)
 	}
 }
 
-// TestCheckerRegexp tests line matching and extraction of issue
+// TestCheckerRegexp tests line matching and extraction of issue.
 func TestCheckerRegexp(t *testing.T) {
 	tests := []struct {
 		regexp string
 		line   string
 		want   Issue
 	}{
-		{"", "file.go:1:issue", Issue{"file.go", 1, 0, 2, "file.go:1:issue", "issue"}},
-		{"", "file.go:1:5:issue", Issue{"file.go", 1, 5, 2, "file.go:1:5:issue", "issue"}},
-		{"", "file.go:1:  issue", Issue{"file.go", 1, 0, 2, "file.go:1:  issue", "issue"}},
-		{`.*?:(.*?\.go):([0-9]+):()(.*)`, "prefix:file.go:1:issue", Issue{"file.go", 1, 0, 2, "prefix:file.go:1:issue", "issue"}},
+		{
+			line: "file.go:1:issue",
+			want: Issue{File: "file.go", LineNo: 1, HunkPos: 2, Issue: "file.go:1:issue", Message: "issue"},
+		},
+		{
+			line: "file.go:1:5:issue",
+			want: Issue{File: "file.go", LineNo: 1, ColNo: 5, HunkPos: 2, Issue: "file.go:1:5:issue", Message: "issue"},
+		},
+		{
+			line: "file.go:1:  issue",
+			want: Issue{File: "file.go", LineNo: 1, HunkPos: 2, Issue: "file.go:1:  issue", Message: "issue"},
+		},
+		{
+			regexp: `.*?:(.*?\.go):([0-9]+):()(.*)`,
+			line:   "prefix:file.go:1:issue",
+			want:   Issue{File: "file.go", LineNo: 1, HunkPos: 2, Issue: "prefix:file.go:1:issue", Message: "issue"},
+		},
 	}
 
 	diff := []byte(`--- a/file.go
@@ -66,7 +94,7 @@ func TestCheckerRegexp(t *testing.T) {
 			Regexp: test.regexp,
 		}
 
-		issues, err := checker.Check(bytes.NewReader([]byte(test.line)), ioutil.Discard)
+		issues, err := checker.Check(bytes.NewReader([]byte(test.line)), io.Discard)
 		if err != nil {
 			t.Errorf("unexpected error: %v", err)
 		}
@@ -86,9 +114,20 @@ func TestWholeFiles(t *testing.T) {
 		line    string
 		matches bool
 	}{
-		{"inside diff", "file.go:1:issue", true},
-		{"outside diff", "file.go:10:5:issue", true},
-		{"different file", "file2.go:1:issue", false},
+		{
+			name:    "inside diff",
+			line:    "file.go:1:issue",
+			matches: true,
+		},
+		{
+			name:    "outside diff",
+			line:    "file.go:10:5:issue",
+			matches: true,
+		},
+		{
+			name: "different file",
+			line: "file2.go:1:issue",
+		},
 	}
 
 	diff := []byte(`--- a/file.go
@@ -104,7 +143,7 @@ func TestWholeFiles(t *testing.T) {
 				WholeFiles: true,
 			}
 
-			issues, err := checker.Check(bytes.NewReader([]byte(test.line)), ioutil.Discard)
+			issues, err := checker.Check(bytes.NewReader([]byte(test.line)), io.Discard)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -119,7 +158,7 @@ func TestWholeFiles(t *testing.T) {
 }
 
 // TestChangesReturn tests the writer in the argument to the Changes function
-// and generally tests the entire programs functionality.
+// and generally tests the entire program functionality.
 func TestChangesWriter(t *testing.T) {
 	tests := map[string]struct {
 		subdir  string
@@ -127,58 +166,68 @@ func TestChangesWriter(t *testing.T) {
 		revFrom string
 		revTo   string
 	}{
-		"2-untracked":            {"", []string{"main.go:3:"}, "", ""},
-		"3-untracked-subdir":     {"", []string{"main.go:3:", "subdir/main.go:3:"}, "", ""},
-		"3-untracked-subdir-cwd": {"subdir", []string{"main.go:3:"}, "", ""},
-		"4-commit":               {"", []string{"main.go:3:", "subdir/main.go:3:"}, "", ""},
-		"5-unstaged-no-warning":  {"", nil, "", ""},
-		"6-unstaged":             {"", []string{"main.go:6:"}, "", ""},
+		"2-untracked":            {exp: []string{"main.go:3:"}},
+		"3-untracked-subdir":     {exp: []string{"main.go:3:", "subdir/main.go:3:"}},
+		"3-untracked-subdir-cwd": {subdir: "subdir", exp: []string{"main.go:3:"}},
+		"4-commit":               {exp: []string{"main.go:3:", "subdir/main.go:3:"}},
+		"5-unstaged-no-warning":  {},
+		"6-unstaged":             {exp: []string{"main.go:6:"}},
 		// From a commit, all changes should be shown
-		"7-commit": {"", []string{"main.go:6:"}, "HEAD~1", ""},
+		"7-commit": {exp: []string{"main.go:6:"}, revFrom: "HEAD~1"},
 		// From a commit+unstaged, all changes should be shown
-		"8-unstaged": {"", []string{"main.go:6:", "main.go:7:"}, "HEAD~1", ""},
+		"8-unstaged": {exp: []string{"main.go:6:", "main.go:7:"}, revFrom: "HEAD~1"},
 		// From a commit+unstaged+untracked, all changes should be shown
-		"9-untracked": {"", []string{"main.go:6:", "main.go:7:", "main2.go:3:"}, "HEAD~1", ""},
+		"9-untracked": {exp: []string{"main.go:6:", "main.go:7:", "main2.go:3:"}, revFrom: "HEAD~1"},
 		// From a commit to last commit, all changes should be shown except recent unstaged, untracked
-		"10-committed": {"", []string{"main.go:6:"}, "HEAD~1", "HEAD~0"},
+		"10-committed": {exp: []string{"main.go:6:"}, revFrom: "HEAD~1", revTo: "HEAD~0"},
 		// static analysis tools with absolute paths should be handled
-		"11-abs-path": {"", []string{"main.go:6:"}, "HEAD~1", "HEAD~0"},
+		"11-abs-path": {exp: []string{"main.go:6:"}, revFrom: "HEAD~1", revTo: "HEAD~0"},
 		// Removing a single line shouldn't raise any issues.
-		"12-removed-lines": {"", nil, "", ""},
+		"12-removed-lines": {},
 	}
 
 	for stage, test := range tests {
 		t.Run(stage, func(t *testing.T) {
 			prevwd, sample := setup(t, stage, test.subdir)
-			reader := bytes.NewBuffer(sample)
+
 			var out bytes.Buffer
 
 			c := Checker{
 				RevisionFrom: test.revFrom,
 				RevisionTo:   test.revTo,
 			}
-			_, err := c.Check(reader, &out)
+			_, err := c.Check(bytes.NewBuffer(sample), &out)
 			if err != nil {
-				t.Errorf("%v: unexpected error: %v", stage, err)
+				t.Errorf("%s: unexpected error: %v", stage, err)
 			}
+
+			var lines []string
+
 			scanner := bufio.NewScanner(&out)
-			var i int
-			for i = 0; scanner.Scan(); i++ {
+			for scanner.Scan() {
 				// Rewrite abs paths to for simpler matching
 				line := rewriteAbs(scanner.Text())
-				line = strings.TrimPrefix(line, "./")
+				lines = append(lines, strings.TrimPrefix(line, "./"))
+			}
 
+			sort.Slice(lines, func(i, j int) bool {
+				return lines[i] <= lines[j]
+			})
+
+			var count int
+			for i, line := range lines {
+				count++
 				if i > len(test.exp)-1 {
-					t.Errorf("%v: unexpected line: %q", stage, line)
-				} else {
-					if !strings.HasPrefix(line, test.exp[i]) {
-						t.Errorf("%v: line does not have prefix: %q line: %q", stage, test.exp[i], line)
-					}
+					t.Errorf("%s: unexpected line: %q", stage, line)
+				} else if !strings.HasPrefix(line, test.exp[i]) {
+					t.Errorf("%s: line does not have prefix: %q line: %q", stage, test.exp[i], line)
 				}
 			}
-			if i != len(test.exp) {
-				t.Errorf("%v: i %v, expected %v", stage, i, len(test.exp))
+
+			if count != len(test.exp) {
+				t.Errorf("%s: got %d, expected %d", stage, count, len(test.exp))
 			}
+
 			teardown(t, prevwd)
 		})
 	}
@@ -235,7 +284,7 @@ func TestLinesChanged(t *testing.T) {
 	have := checker.linesChanged()
 
 	want := map[string][]pos{
-		"file.go": []pos{
+		"file.go": {
 			{lineNo: 2, hunkPos: 3},
 			{lineNo: 21, hunkPos: 7},
 			{lineNo: 30, hunkPos: 11},
