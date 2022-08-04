@@ -18,6 +18,7 @@ mkdir -p git/subdir && cd git
 git init --initial-branch=main
 git config --local user.name "testdata"
 git config --local user.email "testdata@example.com"
+git config --local color.diff always
 
 if [[ "$(go env GOOS)" == "windows" ]]; then
     git config --local core.autocrlf false
