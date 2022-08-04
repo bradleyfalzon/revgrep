@@ -382,6 +382,8 @@ func GitPatch(revisionFrom, revisionTo string) (io.Reader, []string, error) {
 		if revisionTo != "" {
 			cmd.Args = append(cmd.Args, revisionTo)
 		}
+		cmd.Args = append(cmd.Args, "--")
+
 		cmd.Stdout = &patch
 		if err := cmd.Run(); err != nil {
 			return nil, nil, fmt.Errorf("error executing git diff %q %q: %w", revisionFrom, revisionTo, err)
@@ -395,7 +397,7 @@ func GitPatch(revisionFrom, revisionTo string) (io.Reader, []string, error) {
 
 	// make a patch for unstaged changes
 	// use --no-prefix to remove b/ given: +++ b/main.go
-	cmd := exec.Command("git", "diff", "--color=never", "--relative")
+	cmd := exec.Command("git", "diff", "--color=never", "--relative", "--")
 	cmd.Stdout = &patch
 	if err := cmd.Run(); err != nil {
 		return nil, nil, fmt.Errorf("error executing git diff: %w", err)
@@ -410,7 +412,7 @@ func GitPatch(revisionFrom, revisionTo string) (io.Reader, []string, error) {
 
 	// check for changes in recent commit
 
-	cmd = exec.Command("git", "diff", "--color=never", "--relative", "HEAD~")
+	cmd = exec.Command("git", "diff", "--color=never", "--relative", "HEAD~", "--")
 	cmd.Stdout = &patch
 	if err := cmd.Run(); err != nil {
 		return nil, nil, fmt.Errorf("error executing git diff HEAD~: %w", err)
