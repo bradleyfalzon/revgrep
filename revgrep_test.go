@@ -43,7 +43,7 @@ func setup(t *testing.T, stage, subdir string) (string, []byte) {
 	cmd.Dir = gitDir
 
 	goVetOutput, err := cmd.CombinedOutput()
-	if cmd.ProcessState.ExitCode() != 2 {
+	if cmd.ProcessState.ExitCode() != 1 {
 		t.Logf("%s: go vet: %s", stage, string(goVetOutput))
 		t.Fatalf("could not run go vet: %v", err)
 	}

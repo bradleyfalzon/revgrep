@@ -1,3 +1,4 @@
+// Package main a CLI tool used to filter static analysis tools to only lines changed based on a commit reference.
 package main
 
 import (
