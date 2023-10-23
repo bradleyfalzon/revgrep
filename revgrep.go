@@ -437,7 +437,10 @@ func isSupportedByGit(major, minor, patch int) bool {
 		return false
 	}
 
-	vp := regexp.MustCompile(`^(\d+)\.(\d+)(?:\.(\d+))?$`).FindStringSubmatch(v)
+	vp := regexp.MustCompile(`^(\d+)\.(\d+)(?:\.(\d+))?.*$`).FindStringSubmatch(v)
+	if len(vp) < 4 {
+		return false
+	}
 
 	currentMajor, err := strconv.Atoi(vp[1])
 	if err != nil {
