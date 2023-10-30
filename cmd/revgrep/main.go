@@ -1,3 +1,4 @@
+// Package main a CLI tool used to filter static analysis tools to only lines changed based on a commit reference.
 package main
 
 import (
@@ -5,7 +6,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/bradleyfalzon/revgrep"
+	"github.com/golangci/revgrep"
 )
 
 func main() {
@@ -38,7 +39,7 @@ func main() {
 
 	issues, err := checker.Check(os.Stdin, os.Stderr)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		_, _ = fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 	if len(issues) > 0 {

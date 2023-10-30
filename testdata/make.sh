@@ -6,11 +6,6 @@ if [[ "$(basename $(pwd))" != "testdata" ]]; then
     exit 1
 fi
 
-function close() {
-    go vet ./...
-    exit 0
-}
-
 [[ -d git ]] && rm -rf git
 mkdir -p git/subdir && cd git
 
@@ -20,94 +15,98 @@ mkdir -p git/subdir && cd git
 
 # Untracked files
 
-git init > /dev/null
+git init --initial-branch=main
 git config --local user.name "testdata"
 git config --local user.email "testdata@example.com"
+git config --local color.diff always
+
+if [[ "$(go env GOOS)" == "windows" ]]; then
+    git config --local core.autocrlf false
+fi
+
 touch readme
 git add .
-git commit -m "Initial commit" > /dev/null
+git commit -m "Initial commit"
 
-cat > main.go <<EOF
+cat > main.go <<'EOF'
 package main
 import "fmt"
 var _ = fmt.Sprintf("2-untracked %s")
 func main() {}
 EOF
 
-[[ "$1" == "2-untracked" ]] && close
+[[ "$1" == "2-untracked" ]] && exit
 
 # Untracked files with sub dir
 
-cat > subdir/main.go <<EOF
+cat > subdir/main.go <<'EOF'
 package main
 import "fmt"
 var _ = fmt.Sprintf("3-untracked-subdir %s")
 func main() {}
 EOF
 
-[[ "$1" == "3-untracked-subdir" ]] && close
+[[ "$1" == "3-untracked-subdir" ]] && exit
 
 # Placeholder for test to change to sub directory
 
-[[ "$1" == "3-untracked-subdir-cwd" ]] && close
+[[ "$1" == "3-untracked-subdir-cwd" ]] && exit
 
 # Commit
 
 git add .
-git commit -m "Commit" > /dev/null
+git commit -m "Commit"
 
-[[ "$1" == "4-commit" ]] && close
+[[ "$1" == "4-commit" ]] && exit
 
 # Unstage changes without warning
 
-cat >> main.go <<EOF
+cat >> main.go <<'EOF'
 var _ = fmt.Sprintln("5-unstaged-no-warning")
 EOF
 
-[[ "$1" == "5-unstaged-no-warning" ]] && close
+[[ "$1" == "5-unstaged-no-warning" ]] && exit
 
-cat >> main.go <<EOF
+cat >> main.go <<'EOF'
 var _ = fmt.Sprintf("6-unstaged %s")
 EOF
 
-[[ "$1" == "6-unstaged" ]] && close
+[[ "$1" == "6-unstaged" ]] && exit
 
 # Commit all changes
 
 git add .
-git commit -m "Commit" > /dev/null
+git commit -m "Commit"
 
-[[ "$1" == "7-commit" ]] && close
+[[ "$1" == "7-commit" ]] && exit
 
-cat >> main.go <<EOF
+cat >> main.go <<'EOF'
 var _ = fmt.Sprintf("8-unstaged %s")
 EOF
 
-[[ "$1" == "8-unstaged" ]] && close
+[[ "$1" == "8-unstaged" ]] && exit
 
-cat > main2.go <<EOF
+cat > main2.go <<'EOF'
 package main
+import "fmt"
 var _ = fmt.Sprintf("9-untracked %s")
 EOF
 
-[[ "$1" == "9-untracked" ]] && close
+[[ "$1" == "9-untracked" ]] && exit
 
 # Placeholder for test to check committed changes
 
-[[ "$1" == "10-committed" ]] && close
+[[ "$1" == "10-committed" ]] && exit
 
 # Display absolute path
 
-if [[ "$1" == "11-abs-path" ]]; then
-    go vet |& sed -r "s:(.*\.go):$(pwd)/\1:g"
-    exit
-fi
+[[ "$1" == "11-abs-path" ]] && exit
 
 # Remove one line on a file with existing issues
 
 if [[ "$1" == "12-removed-lines" ]]; then
 
-    cat > 12-removed-lines.go <<EOF
+    cat > 12-removed-lines.go <<'EOF'
 package main
 import "fmt"
 var _ = fmt.Sprintf("12-removed-lines %s")
@@ -115,15 +114,14 @@ var _ = fmt.Sprintf("12-removed-lines %s")
 EOF
 
     git add .
-    git commit -m "Commit" > /dev/null
+    git commit -m "Commit"
 
-    cat > 12-removed-lines.go <<EOF
+    cat > 12-removed-lines.go <<'EOF'
 package main
 import "fmt"
 var _ = fmt.Sprintf("12-removed-lines %s")
 EOF
 
     git add .
-    git commit -m "Commit" > /dev/null
-    close
+    git commit -m "Commit"
 fi

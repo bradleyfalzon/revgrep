@@ -3,55 +3,103 @@ package revgrep
 import (
 	"bufio"
 	"bytes"
-	"io/ioutil"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"regexp"
+	"sort"
 	"strings"
 	"testing"
 )
 
-func setup(t *testing.T, stage, subdir string) (prevwd string, sample []byte) {
+func setup(t *testing.T, stage, subdir string) (string, []byte) {
+	t.Helper()
+
 	wd, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("could not get working dir: %s", err)
 	}
 
+	testDataDir := filepath.Join(wd, "testdata")
+
 	// Execute make
-	cmd := exec.Command("./make.sh", stage)
-	cmd.Dir = filepath.Join(wd, "testdata")
-	sample, err = cmd.CombinedOutput()
+	cmd := exec.Command("bash", "./make.sh", stage)
+	cmd.Dir = testDataDir
+
+	gitOutput, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("could not run make.sh: %v, output:\n%s", err, sample)
+		t.Logf("%s: git setup: %s", stage, string(gitOutput))
+		t.Fatalf("could not run make.sh: %v", err)
+	}
+
+	gitDir := filepath.Join(testDataDir, "git")
+	t.Cleanup(func() {
+		_ = os.RemoveAll(gitDir)
+	})
+
+	cmd = exec.Command("go", "vet", "./...")
+	cmd.Dir = gitDir
+
+	goVetOutput, err := cmd.CombinedOutput()
+	if cmd.ProcessState.ExitCode() != 1 {
+		t.Logf("%s: go vet: %s", stage, string(goVetOutput))
+		t.Fatalf("could not run go vet: %v", err)
 	}
 
 	// chdir so the vcs exec commands read the correct testdata
-	err = os.Chdir(filepath.Join(wd, "testdata", "git", subdir))
+	err = os.Chdir(filepath.Join(gitDir, subdir))
 	if err != nil {
 		t.Fatalf("could not chdir: %v", err)
 	}
-	return wd, sample
+
+	if stage == "11-abs-path" {
+		goVetOutput = regexp.MustCompile(`(.+\.go)`).
+			ReplaceAll(goVetOutput, []byte(filepath.Join(gitDir, "$1")))
+	}
+
+	// clean go vet output
+	goVetOutput = bytes.ReplaceAll(goVetOutput, []byte("."+string(filepath.Separator)), []byte(""))
+
+	t.Logf("%s: go vet clean: %s", stage, string(goVetOutput))
+
+	return wd, goVetOutput
 }
 
 func teardown(t *testing.T, wd string) {
+	t.Helper()
+
 	err := os.Chdir(wd)
 	if err != nil {
 		t.Fatalf("could not chdir: %v", err)
 	}
 }
 
-// TestCheckerRegexp tests line matching and extraction of issue
+// TestCheckerRegexp tests line matching and extraction of issue.
 func TestCheckerRegexp(t *testing.T) {
 	tests := []struct {
 		regexp string
 		line   string
 		want   Issue
 	}{
-		{"", "file.go:1:issue", Issue{"file.go", 1, 0, 2, "file.go:1:issue", "issue"}},
-		{"", "file.go:1:5:issue", Issue{"file.go", 1, 5, 2, "file.go:1:5:issue", "issue"}},
-		{"", "file.go:1:  issue", Issue{"file.go", 1, 0, 2, "file.go:1:  issue", "issue"}},
-		{`.*?:(.*?\.go):([0-9]+):()(.*)`, "prefix:file.go:1:issue", Issue{"file.go", 1, 0, 2, "prefix:file.go:1:issue", "issue"}},
+		{
+			line: "file.go:1:issue",
+			want: Issue{File: "file.go", LineNo: 1, HunkPos: 2, Issue: "file.go:1:issue", Message: "issue"},
+		},
+		{
+			line: "file.go:1:5:issue",
+			want: Issue{File: "file.go", LineNo: 1, ColNo: 5, HunkPos: 2, Issue: "file.go:1:5:issue", Message: "issue"},
+		},
+		{
+			line: "file.go:1:  issue",
+			want: Issue{File: "file.go", LineNo: 1, HunkPos: 2, Issue: "file.go:1:  issue", Message: "issue"},
+		},
+		{
+			regexp: `.*?:(.*?\.go):([0-9]+):()(.*)`,
+			line:   "prefix:file.go:1:issue",
+			want:   Issue{File: "file.go", LineNo: 1, HunkPos: 2, Issue: "prefix:file.go:1:issue", Message: "issue"},
+		},
 	}
 
 	diff := []byte(`--- a/file.go
@@ -66,7 +114,7 @@ func TestCheckerRegexp(t *testing.T) {
 			Regexp: test.regexp,
 		}
 
-		issues, err := checker.Check(bytes.NewReader([]byte(test.line)), ioutil.Discard)
+		issues, err := checker.Check(bytes.NewReader([]byte(test.line)), io.Discard)
 		if err != nil {
 			t.Errorf("unexpected error: %v", err)
 		}
@@ -78,68 +126,130 @@ func TestCheckerRegexp(t *testing.T) {
 	}
 }
 
-// TestChangesReturn tests the writer in the argument to the Changes function
-// and generally tests the entire programs functionality.
-func TestChangesWriter(t *testing.T) {
+// TestWholeFile tests Checker.WholeFiles will report any issues in files that have changes, even if
+// they are outside the diff.
+func TestWholeFiles(t *testing.T) {
+	tests := []struct {
+		name    string
+		line    string
+		matches bool
+	}{
+		{
+			name:    "inside diff",
+			line:    "file.go:1:issue",
+			matches: true,
+		},
+		{
+			name:    "outside diff",
+			line:    "file.go:10:5:issue",
+			matches: true,
+		},
+		{
+			name: "different file",
+			line: "file2.go:1:issue",
+		},
+	}
+
+	diff := []byte(`--- a/file.go
++++ b/file.go
+@@ -1,1 +1,1 @@
+-func Line() {}
++func NewLine() {}`)
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			checker := Checker{
+				Patch:      bytes.NewReader(diff),
+				WholeFiles: true,
+			}
+
+			issues, err := checker.Check(bytes.NewReader([]byte(test.line)), io.Discard)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if test.matches && len(issues) != 1 {
+				t.Fatalf("expected one issue to be returned, but got %#v", issues)
+			}
+			if !test.matches && len(issues) != 0 {
+				t.Fatalf("expected no issues to be returned, but got %#v", issues)
+			}
+		})
+	}
+}
+
+// Tests the writer in the argument to the Changes function
+// and generally tests the entire program functionality.
+func TestChecker_Check_changesWriter(t *testing.T) {
 	tests := map[string]struct {
 		subdir  string
 		exp     []string // file:linenumber including trailing colon
 		revFrom string
 		revTo   string
 	}{
-		"2-untracked":            {"", []string{"main.go:3:"}, "", ""},
-		"3-untracked-subdir":     {"", []string{"main.go:3:", "subdir/main.go:3:"}, "", ""},
-		"3-untracked-subdir-cwd": {"subdir", []string{"main.go:3:"}, "", ""},
-		"4-commit":               {"", []string{"main.go:3:", "subdir/main.go:3:"}, "", ""},
-		"5-unstaged-no-warning":  {"", nil, "", ""},
-		"6-unstaged":             {"", []string{"main.go:6:"}, "", ""},
+		"2-untracked":            {exp: []string{"main.go:3:"}},
+		"3-untracked-subdir":     {exp: []string{"main.go:3:", "subdir/main.go:3:"}},
+		"3-untracked-subdir-cwd": {subdir: "subdir", exp: []string{"main.go:3:"}},
+		"4-commit":               {exp: []string{"main.go:3:", "subdir/main.go:3:"}},
+		"5-unstaged-no-warning":  {},
+		"6-unstaged":             {exp: []string{"main.go:6:"}},
 		// From a commit, all changes should be shown
-		"7-commit": {"", []string{"main.go:6:"}, "HEAD~1", ""},
+		"7-commit": {exp: []string{"main.go:6:"}, revFrom: "HEAD~1"},
 		// From a commit+unstaged, all changes should be shown
-		"8-unstaged": {"", []string{"main.go:6:", "main.go:7:"}, "HEAD~1", ""},
+		"8-unstaged": {exp: []string{"main.go:6:", "main.go:7:"}, revFrom: "HEAD~1"},
 		// From a commit+unstaged+untracked, all changes should be shown
-		"9-untracked": {"", []string{"main.go:6:", "main.go:7:", "main2.go:2:"}, "HEAD~1", ""},
+		"9-untracked": {exp: []string{"main.go:6:", "main.go:7:", "main2.go:3:"}, revFrom: "HEAD~1"},
 		// From a commit to last commit, all changes should be shown except recent unstaged, untracked
-		"10-committed": {"", []string{"main.go:6:"}, "HEAD~1", "HEAD~0"},
+		"10-committed": {exp: []string{"main.go:6:"}, revFrom: "HEAD~1", revTo: "HEAD~0"},
 		// static analysis tools with absolute paths should be handled
-		"11-abs-path": {"", []string{"main.go:6:"}, "HEAD~1", "HEAD~0"},
+		"11-abs-path": {exp: []string{"main.go:6:"}, revFrom: "HEAD~1", revTo: "HEAD~0"},
 		// Removing a single line shouldn't raise any issues.
-		"12-removed-lines": {"", nil, "", ""},
+		"12-removed-lines": {},
 	}
 
 	for stage, test := range tests {
-		prevwd, sample := setup(t, stage, test.subdir)
+		t.Run(stage, func(t *testing.T) {
+			prevwd, goVetOutput := setup(t, stage, test.subdir)
 
-		reader := bytes.NewBuffer(sample)
-		var out bytes.Buffer
+			var out bytes.Buffer
 
-		c := Checker{
-			RevisionFrom: test.revFrom,
-			RevisionTo:   test.revTo,
-		}
-		_, err := c.Check(reader, &out)
-		if err != nil {
-			t.Errorf("%v: unexpected error: %v", stage, err)
-		}
+			c := Checker{
+				RevisionFrom: test.revFrom,
+				RevisionTo:   test.revTo,
+			}
+			_, err := c.Check(bytes.NewBuffer(goVetOutput), &out)
+			if err != nil {
+				t.Errorf("%s: unexpected error: %v", stage, err)
+			}
 
-		scanner := bufio.NewScanner(&out)
-		var i int
-		for i = 0; scanner.Scan(); i++ {
-			// Rewrite abs paths to for simpler matching
-			line := rewriteAbs(scanner.Text())
+			var lines []string
 
-			if i > len(test.exp)-1 {
-				t.Errorf("%v: unexpected line: %q", stage, line)
-			} else {
-				if !strings.HasPrefix(line, test.exp[i]) {
-					t.Errorf("%v: line does not have prefix: %q line: %q", stage, test.exp[i], line)
+			scanner := bufio.NewScanner(&out)
+			for scanner.Scan() {
+				// Rewrite abs paths to for simpler matching
+				line := rewriteAbs(scanner.Text())
+				lines = append(lines, strings.TrimPrefix(line, "./"))
+			}
+
+			sort.Slice(lines, func(i, j int) bool {
+				return lines[i] <= lines[j]
+			})
+
+			var count int
+			for i, line := range lines {
+				count++
+				if i > len(test.exp)-1 {
+					t.Errorf("%s: unexpected line: %q", stage, line)
+				} else if !strings.HasPrefix(line, filepath.FromSlash(test.exp[i])) {
+					t.Errorf("%s: line %q does not have prefix %q", stage, line, filepath.FromSlash(test.exp[i]))
 				}
 			}
-		}
-		if i != len(test.exp) {
-			t.Errorf("%v: i %v, expected %v", stage, i, len(test.exp))
-		}
-		teardown(t, prevwd)
+
+			if count != len(test.exp) {
+				t.Errorf("%s: got %d, expected %d", stage, count, len(test.exp))
+			}
+
+			teardown(t, prevwd)
+		})
 	}
 }
 
@@ -148,7 +258,7 @@ func rewriteAbs(line string) string {
 	if err != nil {
 		panic(err)
 	}
-	return strings.TrimPrefix(line, cwd+"/")
+	return strings.TrimPrefix(line, cwd+string(filepath.Separator))
 }
 
 func TestGitPatchNonGitDir(t *testing.T) {
@@ -194,7 +304,7 @@ func TestLinesChanged(t *testing.T) {
 	have := checker.linesChanged()
 
 	want := map[string][]pos{
-		"file.go": []pos{
+		"file.go": {
 			{lineNo: 2, hunkPos: 3},
 			{lineNo: 21, hunkPos: 7},
 			{lineNo: 30, hunkPos: 11},

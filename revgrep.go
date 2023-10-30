@@ -1,3 +1,4 @@
+// Package revgrep filter static analysis tools to only lines changed based on a commit reference.
 package revgrep
 
 import (
@@ -17,29 +18,30 @@ import (
 // Checker provides APIs to filter static analysis tools to specific commits,
 // such as showing only issues since last commit.
 type Checker struct {
-	// Patch file (unified) to read to detect lines being changed, if nil revgrep
-	// will attempt to detect the VCS and generate an appropriate patch. Auto
-	// detection will search for uncommitted changes first, if none found, will
-	// generate a patch from last committed change. File paths within patches
-	// must be relative to current working directory.
+	// Patch file (unified) to read to detect lines being changed,
+	// if nil revgrep will attempt to detect the VCS and generate an appropriate patch.
+	// Auto-detection will search for uncommitted changes first,
+	// if none found, will generate a patch from last committed change.
+	// File paths within patches must be relative to current working directory.
 	Patch io.Reader
-	// NewFiles is a list of file names (with absolute paths) where the entire
-	// contents of the file is new.
+	// NewFiles is a list of file names (with absolute paths) where the entire contents of the file is new.
 	NewFiles []string
 	// Debug sets the debug writer for additional output.
 	Debug io.Writer
-	// RevisionFrom check revision starting at, leave blank for auto detection
-	// ignored if patch is set.
+	// RevisionFrom check revision starting at, leave blank for auto-detection ignored if patch is set.
 	RevisionFrom string
-	// RevisionTo checks revision finishing at, leave blank for auto detection
-	// ignored if patch is set.
+	// WholeFiles indicates that the user wishes to see all issues that comes up anywhere in any file that has been changed in this revision or patch.
+	WholeFiles bool
+	// RevisionTo checks revision finishing at, leave blank for auto-detection ignored if patch is set.
 	RevisionTo string
 	// Regexp to match path, line number, optional column number, and message.
 	Regexp string
-	// AbsPath is used to make an absolute path of an issue's filename to be
-	// relative in order to match patch file. If not set, current working
-	// directory is used.
+	// AbsPath is used to make an absolute path of an issue's filename to be relative in order to match patch file.
+	// If not set, current working directory is used.
 	AbsPath string
+
+	// Calculated changes for next calls to IsNewIssue
+	changes map[string][]pos
 }
 
 // Issue contains metadata about an issue found.
@@ -50,9 +52,7 @@ type Issue struct {
 	LineNo int
 	// ColNo is the column number or 0 if none could be parsed.
 	ColNo int
-	// HunkPos is position from file's first @@, for new files this will be the
-	// line number.
-	//
+	// HunkPos is position from file's first @@, for new files this will be the line number.
 	// See also: https://developer.github.com/v3/pulls/comments/#create-a-comment
 	HunkPos int
 	// Issue text as it appeared from the tool.
@@ -61,54 +61,105 @@ type Issue struct {
 	Message string
 }
 
-// Check scans reader and writes any lines to writer that have been added in
-// Checker.Patch.
-//
-// Returns issues written to writer when no error occurs.
-//
-// If no VCS could be found or other VCS errors occur, all issues are written
-// to writer and an error is returned.
-//
-// File paths in reader must be relative to current working directory or
-// absolute.
-func (c Checker) Check(reader io.Reader, writer io.Writer) (issues []Issue, err error) {
-	// Check if patch is supplied, if not, retrieve from VCS
+// InputIssue represents issue found by some linter.
+type InputIssue interface {
+	FilePath() string
+	Line() int
+}
+
+type simpleInputIssue struct {
+	filePath   string
+	lineNumber int
+}
+
+type pos struct {
+	lineNo  int // line number
+	hunkPos int // position relative to first @@ in file
+}
+
+func (i simpleInputIssue) FilePath() string {
+	return i.filePath
+}
+
+func (i simpleInputIssue) Line() int {
+	return i.lineNumber
+}
+
+// Prepare extracts a patch and changed lines.
+func (c *Checker) Prepare() error {
+	returnErr := c.preparePatch()
+	c.changes = c.linesChanged()
+	return returnErr
+}
+
+// IsNewIssue checks whether issue found by linter is new: it was found in changed lines.
+func (c *Checker) IsNewIssue(i InputIssue) (hunkPos int, isNew bool) {
+	fchanges, ok := c.changes[filepath.ToSlash(i.FilePath())]
+	if !ok { // file wasn't changed
+		return 0, false
+	}
+
+	if c.WholeFiles {
+		return i.Line(), true
+	}
+
 	var (
-		writeAll  bool
-		returnErr error
+		fpos    pos
+		changed bool
 	)
-	if c.Patch == nil {
-		c.Patch, c.NewFiles, err = GitPatch(c.RevisionFrom, c.RevisionTo)
-		if err != nil {
-			writeAll = true
-			returnErr = fmt.Errorf("could not read git repo: %s", err)
-		}
-		if c.Patch == nil {
-			writeAll = true
-			returnErr = errors.New("no version control repository found")
+	// found file, see if lines matched
+	for _, pos := range fchanges {
+		if pos.lineNo == i.Line() {
+			fpos = pos
+			changed = true
+			break
 		}
 	}
 
+	if changed || fchanges == nil {
+		// either file changed or it's a new file
+		hunkPos := fpos.lineNo
+		if changed { // existing file changed
+			hunkPos = fpos.hunkPos
+		}
+
+		return hunkPos, true
+	}
+
+	return 0, false
+}
+
+// Check scans reader and writes any lines to writer that have been added in Checker.Patch.
+//
+// Returns the issues written to writer when no error occurs.
+//
+// If no VCS could be found or other VCS errors occur,
+// all issues are written to writer and an error is returned.
+//
+// File paths in reader must be relative to current working directory or absolute.
+func (c *Checker) Check(reader io.Reader, writer io.Writer) (issues []Issue, err error) {
+	returnErr := c.Prepare()
+	writeAll := returnErr != nil
+
 	// file.go:lineNo:colNo:message
 	// colNo is optional, strip spaces before message
-	lineRE := regexp.MustCompile(`(.*?\.go):([0-9]+):([0-9]+)?:?\s*(.*)`)
+	lineRE := regexp.MustCompile(`(.+\.go):([0-9]+):([0-9]+)?:?\s*(.*)`)
 	if c.Regexp != "" {
 		lineRE, err = regexp.Compile(c.Regexp)
 		if err != nil {
-			return nil, fmt.Errorf("could not parse regexp: %v", err)
+			return nil, fmt.Errorf("could not parse regexp: %w", err)
 		}
 	}
 
 	// TODO consider lazy loading this, if there's nothing in stdin, no point
 	// checking for recent changes
-	linesChanged := c.linesChanged()
-	c.debugf("lines changed: %+v", linesChanged)
+	c.debugf("lines changed: %+v", c.changes)
 
 	absPath := c.AbsPath
 	if absPath == "" {
 		absPath, err = os.Getwd()
 		if err != nil {
-			returnErr = fmt.Errorf("could not get current working directory: %s", err)
+			returnErr = fmt.Errorf("could not get current working directory: %w", err)
 		}
 	}
 
@@ -122,7 +173,7 @@ func (c Checker) Check(reader io.Reader, writer io.Writer) (issues []Issue, err 
 		}
 
 		if writeAll {
-			fmt.Fprintln(writer, scanner.Text())
+			_, _ = fmt.Fprintln(writer, scanner.Text())
 			continue
 		}
 
@@ -155,62 +206,59 @@ func (c Checker) Check(reader io.Reader, writer io.Writer) (issues []Issue, err 
 
 		c.debugf("path: %q, lineNo: %v, colNo: %v, msg: %q", path, lno, cno, msg)
 
-		var (
-			fpos    pos
-			changed bool
-		)
-		if fchanges, ok := linesChanged[path]; ok {
-			// found file, see if lines matched
-			for _, pos := range fchanges {
-				if pos.lineNo == int(lno) {
-					fpos = pos
-					changed = true
-				}
+		simpleIssue := simpleInputIssue{filePath: path, lineNumber: int(lno)}
+
+		hunkPos, changed := c.IsNewIssue(simpleIssue)
+		if changed {
+			issue := Issue{
+				File:    path,
+				LineNo:  int(lno),
+				ColNo:   int(cno),
+				HunkPos: hunkPos,
+				Issue:   scanner.Text(),
+				Message: msg,
 			}
-			if changed || fchanges == nil {
-				// either file changed or it's a new file
-				issue := Issue{
-					File:    path,
-					LineNo:  fpos.lineNo,
-					ColNo:   int(cno),
-					HunkPos: fpos.lineNo,
-					Issue:   scanner.Text(),
-					Message: msg,
-				}
-				if changed {
-					// existing file changed
-					issue.HunkPos = fpos.hunkPos
-				}
-				issues = append(issues, issue)
-				fmt.Fprintln(writer, scanner.Text())
-			}
-		}
-		if !changed {
+			issues = append(issues, issue)
+
+			_, _ = fmt.Fprintln(writer, scanner.Text())
+		} else {
 			c.debugf("unchanged: %s", scanner.Text())
 		}
 	}
+
 	if err := scanner.Err(); err != nil {
-		returnErr = fmt.Errorf("error reading standard input: %s", err)
+		returnErr = fmt.Errorf("error reading standard input: %w", err)
 	}
+
 	return issues, returnErr
 }
 
-func (c Checker) debugf(format string, s ...interface{}) {
+func (c *Checker) debugf(format string, s ...interface{}) {
 	if c.Debug != nil {
-		fmt.Fprint(c.Debug, "DEBUG: ")
-		fmt.Fprintf(c.Debug, format+"\n", s...)
+		_, _ = fmt.Fprint(c.Debug, "DEBUG: ")
+		_, _ = fmt.Fprintf(c.Debug, format+"\n", s...)
 	}
 }
 
-type pos struct {
-	lineNo  int // line number
-	hunkPos int // position relative to first @@ in file
+func (c *Checker) preparePatch() error {
+	// Check if patch is supplied, if not, retrieve from VCS
+	if c.Patch == nil {
+		var err error
+		c.Patch, c.NewFiles, err = GitPatch(c.RevisionFrom, c.RevisionTo)
+		if err != nil {
+			return fmt.Errorf("could not read git repo: %w", err)
+		}
+		if c.Patch == nil {
+			return errors.New("no version control repository found")
+		}
+	}
+
+	return nil
 }
 
 // linesChanges returns a map of file names to line numbers being changed.
-// If key is nil, the file has been recently added, else it contains a slice
-// of positions that have been added.
-func (c Checker) linesChanged() map[string][]pos {
+// If key is nil, the file has been recently added, else it contains a slice of positions that have been added.
+func (c *Checker) linesChanged() map[string][]pos {
 	type state struct {
 		file    string
 		lineNo  int   // current line number within chunk
@@ -218,10 +266,7 @@ func (c Checker) linesChanged() map[string][]pos {
 		changes []pos // position of changes
 	}
 
-	var (
-		s       state
-		changes = make(map[string][]pos)
-	)
+	changes := make(map[string][]pos)
 
 	for _, file := range c.NewFiles {
 		changes[file] = nil
@@ -231,9 +276,23 @@ func (c Checker) linesChanged() map[string][]pos {
 		return changes
 	}
 
-	scanner := bufio.NewScanner(c.Patch)
-	for scanner.Scan() {
-		line := scanner.Text() // TODO scanner.Bytes()
+	var s state
+
+	scanner := bufio.NewReader(c.Patch)
+	var scanErr error
+	for {
+		lineB, isPrefix, err := scanner.ReadLine()
+		if isPrefix {
+			// If a single line overflowed the buffer, don't bother processing it as
+			// it's likey part of a file and not relevant to the patch.
+			continue
+		}
+		if err != nil {
+			scanErr = err
+			break
+		}
+		line := strings.TrimRight(string(lineB), "\n")
+
 		c.debugf(line)
 		s.lineNo++
 		s.hunkPos++
@@ -263,40 +322,37 @@ func (c Checker) linesChanged() map[string][]pos {
 		case strings.HasPrefix(line, "+"):
 			s.changes = append(s.changes, pos{lineNo: s.lineNo, hunkPos: s.hunkPos})
 		}
+	}
 
+	if !errors.Is(scanErr, io.EOF) {
+		_, _ = fmt.Fprintln(os.Stderr, "reading standard input:", scanErr)
 	}
-	if err := scanner.Err(); err != nil {
-		fmt.Fprintln(os.Stderr, "reading standard input:", err)
-	}
+
 	// record the last state
 	changes[s.file] = s.changes
 
 	return changes
 }
 
-// GitPatch returns a patch from a git repository, if no git repository was
-// was found and no errors occurred, nil is returned, else an error is returned
-// revisionFrom and revisionTo defines the git diff parameters, if left blank
-// and there are unstaged changes or untracked files, only those will be returned
-// else only check changes since HEAD~. If revisionFrom is set but revisionTo
-// is not, untracked files will be included, to exclude untracked files set
-// revisionTo to HEAD~. It's incorrect to specify revisionTo without a
-// revisionFrom.
+// GitPatch returns a patch from a git repository,
+// if no git repository was found and no errors occurred, nil is returned, else an error is returned revisionFrom and revisionTo defines the git diff parameters,
+// if left blank and there are unstaged changes or untracked files, only those will be returned else only check changes since HEAD~.
+// If revisionFrom is set but revisionTo is not, untracked files will be included, to exclude untracked files set revisionTo to HEAD~.
+// It's incorrect to specify revisionTo without a revisionFrom.
 func GitPatch(revisionFrom, revisionTo string) (io.Reader, []string, error) {
-	var patch bytes.Buffer
-
 	// check if git repo exists
-	if err := exec.Command("git", "status").Run(); err != nil {
+	if err := exec.Command("git", "status", "--porcelain").Run(); err != nil {
 		// don't return an error, we assume the error is not repo exists
 		return nil, nil, nil
 	}
 
 	// make a patch for untracked files
-	var newFiles []string
-	ls, err := exec.Command("git", "ls-files", "-o").CombinedOutput()
+	ls, err := exec.Command("git", "ls-files", "--others", "--exclude-standard").CombinedOutput()
 	if err != nil {
-		return nil, nil, fmt.Errorf("error executing git ls-files: %s", err)
+		return nil, nil, fmt.Errorf("error executing git ls-files: %w", err)
 	}
+
+	var newFiles []string
 	for _, file := range bytes.Split(ls, []byte{'\n'}) {
 		if len(file) == 0 || bytes.HasSuffix(file, []byte{'/'}) {
 			// ls-files was sometimes showing directories when they were ignored
@@ -307,28 +363,31 @@ func GitPatch(revisionFrom, revisionTo string) (io.Reader, []string, error) {
 		newFiles = append(newFiles, string(file))
 	}
 
+	var patch bytes.Buffer
 	if revisionFrom != "" {
-		cmd := exec.Command("git", "diff", revisionFrom)
+		cmd := gitDiff(revisionFrom)
 		if revisionTo != "" {
 			cmd.Args = append(cmd.Args, revisionTo)
 		}
+		cmd.Args = append(cmd.Args, "--")
+
 		cmd.Stdout = &patch
 		if err := cmd.Run(); err != nil {
-			return nil, nil, fmt.Errorf("error executing git diff %q %q: %s", revisionFrom, revisionTo, err)
+			return nil, nil, fmt.Errorf("error executing git diff %q %q: %w", revisionFrom, revisionTo, err)
 		}
 
 		if revisionTo == "" {
 			return &patch, newFiles, nil
 		}
+
 		return &patch, nil, nil
 	}
 
 	// make a patch for unstaged changes
-	// use --no-prefix to remove b/ given: +++ b/main.go
-	cmd := exec.Command("git", "diff")
+	cmd := gitDiff("--")
 	cmd.Stdout = &patch
 	if err := cmd.Run(); err != nil {
-		return nil, nil, fmt.Errorf("error executing git diff: %s", err)
+		return nil, nil, fmt.Errorf("error executing git diff: %w", err)
 	}
 	unstaged := patch.Len() > 0
 
@@ -340,11 +399,63 @@ func GitPatch(revisionFrom, revisionTo string) (io.Reader, []string, error) {
 
 	// check for changes in recent commit
 
-	cmd = exec.Command("git", "diff", "HEAD~")
+	cmd = gitDiff("HEAD~", "--")
 	cmd.Stdout = &patch
 	if err := cmd.Run(); err != nil {
-		return nil, nil, fmt.Errorf("error executing git diff HEAD~: %s", err)
+		return nil, nil, fmt.Errorf("error executing git diff HEAD~: %w", err)
 	}
 
 	return &patch, nil, nil
+}
+
+func gitDiff(extraArgs ...string) *exec.Cmd {
+	cmd := exec.Command("git", "diff", "--color=never", "--no-ext-diff")
+
+	if isSupportedByGit(2, 41, 0) {
+		cmd.Args = append(cmd.Args, "--default-prefix")
+	}
+
+	cmd.Args = append(cmd.Args, "--relative")
+	cmd.Args = append(cmd.Args, extraArgs...)
+
+	return cmd
+}
+
+func isSupportedByGit(major, minor, patch int) bool {
+	output, err := exec.Command("git", "version").CombinedOutput()
+	if err != nil {
+		return false
+	}
+
+	parts := bytes.Split(bytes.TrimSpace(output), []byte(" "))
+	if len(parts) < 3 {
+		return false
+	}
+
+	v := string(parts[2])
+	if v == "" {
+		return false
+	}
+
+	vp := regexp.MustCompile(`^(\d+)\.(\d+)(?:\.(\d+))?.*$`).FindStringSubmatch(v)
+	if len(vp) < 4 {
+		return false
+	}
+
+	currentMajor, err := strconv.Atoi(vp[1])
+	if err != nil {
+		return false
+	}
+
+	currentMinor, err := strconv.Atoi(vp[2])
+	if err != nil {
+		return false
+	}
+
+	currentPatch, err := strconv.Atoi(vp[3])
+	if err != nil {
+		return false
+	}
+
+	return currentMajor*1_000_000_000+currentMinor*1_000_000+currentPatch*1_000 >= major*1_000_000_000+minor*1_000_000+patch*1_000
 }
