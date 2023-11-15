@@ -274,6 +274,15 @@ func (c Checker) linesChanged() map[string][]pos {
 	return changes
 }
 
+// readGitDiffStderr returns the error from git diff stderr.
+func readGitDiffStderr(buff bytes.Buffer) error {
+	output, err := io.ReadAll(&buff)
+	if err != nil {
+		return fmt.Errorf("could not read git diff stderr: %v", err)
+	}
+	return errors.New(string(output))
+}
+
 // GitPatch returns a patch from a git repository, if no git repository was
 // was found and no errors occurred, nil is returned, else an error is returned
 // revisionFrom and revisionTo defines the git diff parameters, if left blank
@@ -284,6 +293,7 @@ func (c Checker) linesChanged() map[string][]pos {
 // revisionFrom.
 func GitPatch(revisionFrom, revisionTo string) (io.Reader, []string, error) {
 	var patch bytes.Buffer
+	var errBuff bytes.Buffer
 
 	// check if git repo exists
 	if err := exec.Command("git", "status").Run(); err != nil {
@@ -313,8 +323,10 @@ func GitPatch(revisionFrom, revisionTo string) (io.Reader, []string, error) {
 			cmd.Args = append(cmd.Args, revisionTo)
 		}
 		cmd.Stdout = &patch
+		cmd.Stderr = &errBuff
 		if err := cmd.Run(); err != nil {
-			return nil, nil, fmt.Errorf("error executing git diff %q %q: %s", revisionFrom, revisionTo, err)
+			gitDiffStderr := readGitDiffStderr(errBuff)
+			return nil, nil, fmt.Errorf("error executing git diff %q %q: %s\n%v", revisionFrom, revisionTo, err, gitDiffStderr)
 		}
 
 		if revisionTo == "" {
@@ -327,8 +339,10 @@ func GitPatch(revisionFrom, revisionTo string) (io.Reader, []string, error) {
 	// use --no-prefix to remove b/ given: +++ b/main.go
 	cmd := exec.Command("git", "diff")
 	cmd.Stdout = &patch
+	cmd.Stderr = &errBuff
 	if err := cmd.Run(); err != nil {
-		return nil, nil, fmt.Errorf("error executing git diff: %s", err)
+		gitDiffStderr := readGitDiffStderr(errBuff)
+		return nil, nil, fmt.Errorf("error executing git diff: %s\n%v", err, gitDiffStderr)
 	}
 	unstaged := patch.Len() > 0
 
@@ -342,8 +356,10 @@ func GitPatch(revisionFrom, revisionTo string) (io.Reader, []string, error) {
 
 	cmd = exec.Command("git", "diff", "HEAD~")
 	cmd.Stdout = &patch
+	cmd.Stderr = &errBuff
 	if err := cmd.Run(); err != nil {
-		return nil, nil, fmt.Errorf("error executing git diff HEAD~: %s", err)
+		gitDiffStderr := readGitDiffStderr(errBuff)
+		return nil, nil, fmt.Errorf("error executing git diff HEAD~: %s\n%v", err, gitDiffStderr)
 	}
 
 	return &patch, nil, nil
